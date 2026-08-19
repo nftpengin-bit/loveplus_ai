@@ -25,24 +25,26 @@ if not st.session_state.authenticated:
 # --- 2. メインアプリの準備 ---
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-
-# --- スプレッドシート保存関数（ここが修正ポイント！） ---
+# --- スプレッドシート保存関数 ---
 def log_to_spreadsheet(character, user_msg, ai_msg):
   try:
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    # Secretsの「GCP_JSON」からテキストを読み込んで正しくJSONに変換する
-    creds_dict = json.loads(st.secrets["GCP_JSON"])
+    # ★ 修正ポイント: strict=False を追加して、改行エラーを安全に無視する！
+    creds_dict = json.loads(st.secrets["GCP_JSON"], strict=False)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
+    
+    # 「AI会話ログ」という名前のスプレッドシートの1枚目のシートを開く
     sheet = client.open("AI会話ログ").sheet1
+    
+    # 日時、キャラクター名、ユーザーの発言、AIの返答を追加
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sheet.append_row([now, character, user_msg, ai_msg])
   except Exception as e:
     st.warning(f"スプレッドシート保存エラー: {e}")
-
 
 # --- 3. サイドバー・キャラ設定 ---
 st.sidebar.title("ヒロイン選択")
