@@ -40,7 +40,10 @@ def log_to_spreadsheet(character, user_msg, ai_msg):
     client = gspread.authorize(creds)
     sheet = client.open_by_url(SHEET_URL).sheet1
     
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # ★ ここを日本時間に書き換え！
+    JST = datetime.timezone(datetime.timedelta(hours=+9), 'JST')
+    now = datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+    
     sheet.insert_row([now, character, user_msg, ai_msg], index=1, value_input_option="USER_ENTERED")
   except Exception as e:
     if "200" not in str(e):
