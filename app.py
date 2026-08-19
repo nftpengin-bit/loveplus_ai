@@ -42,7 +42,7 @@ def log_to_spreadsheet(character, user_msg, ai_msg):
     
     # 日時、キャラクター名、ユーザーの発言、AIの返答を追加
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([now, character, user_msg, ai_msg])
+    sheet.insert_row([now, character, user_msg, ai_msg], index=1, value_input_option="USER_ENTERED")
   except Exception as e:
     st.warning(f"スプレッドシート保存エラー: {e}")
 
