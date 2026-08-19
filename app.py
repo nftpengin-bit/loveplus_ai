@@ -64,7 +64,7 @@ current_time_str = now.strftime("%Y年%m月%d日 %H時%M分")
 system_instruction = f"【現在時刻】\n今は {current_time_str} です。\n\n【キャラクター設定】\n{prompt}\n\n【これまでの全会話履歴】\n{history}"
 
 model = genai.GenerativeModel(
-    model_name="gemini-3.5-flash",
+    model_name="gemini-3.6-flash",
     system_instruction=system_instruction
 )
 
