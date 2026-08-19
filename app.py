@@ -107,7 +107,7 @@ if "current_char" not in st.session_state or st.session_state.current_char != ch
       
       # ★ ここを超高速モデルに変更しました！
       model = genai.GenerativeModel(
-          model_name="gemini-1.5-flash-8b", 
+          model_name="gemini-3.5-flash-lite", 
           system_instruction=system_instruction
       )
       st.session_state.chat_session = model.start_chat(history=[])
