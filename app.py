@@ -26,7 +26,7 @@ if not st.session_state.authenticated:
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # スプレッドシートのURL（ここにのりちゃんのURLを入れてね！）
-SHEET_URL = "ここにあなたのスプレッドシートのURLを貼り付ける"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1iRwQtDpjmx4KgsE_b4llauDp5qnQ63rkiYOoDadOQ0g/edit?gid=0#gid=0"
 
 # --- 3. スプレッドシート関数 ---
 
