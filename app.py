@@ -26,20 +26,23 @@ if not st.session_state.authenticated:
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # --- スプレッドシート保存関数 ---
+
 def log_to_spreadsheet(character, user_msg, ai_msg):
-    try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        creds_dict = json.loads(st.secrets["GCP_JSON"])
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        client = gspread.authorize(creds)
-        sheet = client.open("AI会話ログ").sheet1
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sheet.append_row([now, character, user_msg, ai_msg])
-    except Exception as e:
-        st.warning(f"スプレッドシート保存エラー: {e}")
+  try:
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    # Streamlitのセキュアなテーブル形式から直接認証情報を読み込む
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scopes
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open("AI会話ログ").sheet1
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.append_row([now, character, user_msg, ai_msg])
+  except Exception as e:
+    st.warning(f"スプレッドシート保存エラー: {e}")
 
 # --- 3. サイドバー・キャラ設定 ---
 st.sidebar.title("ヒロイン選択")
