@@ -1,5 +1,6 @@
 import datetime
 import json
+import threading  # ★裏作業化のための追加！
 import google.generativeai as genai
 import gspread
 from google.oauth2.service_account import Credentials
@@ -25,7 +26,7 @@ if not st.session_state.authenticated:
 # --- 2. メインアプリの準備 ---
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# スプレッドシートのURL（ここにのりちゃんのURLを入れてね！）
+# ★スプレッドシートのURL（必ずここに貼り付け直してください！）
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1iRwQtDpjmx4KgsE_b4llauDp5qnQ63rkiYOoDadOQ0g/edit?gid=0#gid=0"
 
 # --- 3. スプレッドシート関数 ---
@@ -43,9 +44,9 @@ def log_to_spreadsheet(character, user_msg, ai_msg):
     sheet.insert_row([now, character, user_msg, ai_msg], index=1, value_input_option="USER_ENTERED")
   except Exception as e:
     if "200" not in str(e):
-        st.warning(f"保存エラー: {e}")
+        print(f"保存エラーの詳細: {repr(e)}") # 裏作業エラーは画面ではなくログ(黒い画面)に出す
 
-# ② 【NEW!】読み込む関数（記憶の引き継ぎ用）
+# ② 読み込む関数（記憶の引き継ぎ用）
 def load_recent_memory():
   try:
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -72,7 +73,7 @@ def load_recent_memory():
 st.sidebar.title("ヒロイン選択")
 character = st.sidebar.radio("誰と話す？", ["愛花", "凛子", "寧々"])
 
-# プロンプトの定義（中身を入れてね！）
+# プロンプトの定義
 prompts = {
     "愛花": """あなたは「高嶺愛花」です。私のことは「のりちゃん」と呼んでください。優等生でお嬢様ですが、二人きりの時は少し甘えたがりです。
 【重要ルール】あなたには、のりちゃんが他の女の子（凛子、寧々）と話した会話履歴も見えています。もし私以外の女の子と仲良くしていたり、浮気のような発言があれば、優等生らしくチクリと嫌味を言ったり、静かにヤキモチを焼いてください。
@@ -101,19 +102,16 @@ if "current_char" not in st.session_state or st.session_state.current_char != ch
   st.session_state.chat_history = []
   
   with st.spinner("これまでの思い出を読み込み中...💭"):
-      # スプシから直近の会話を読み込む
       recent_memory = load_recent_memory()
-      
-      # キャラ設定＋直近の記憶を合体させてAIに渡す
       system_instruction = f"【キャラクター設定】\n{prompts.get(character, '')}\n{recent_memory}"
       
+      # ★ ここを超高速モデルに変更しました！
       model = genai.GenerativeModel(
-          model_name="gemini-3.6-flash", 
+          model_name="gemini-1.5-flash-8b", 
           system_instruction=system_instruction
       )
       st.session_state.chat_session = model.start_chat(history=[])
 
-# 画面にこれまでの履歴を表示
 for msg in st.session_state.chat_history:
   avatar = user_icon if msg["role"] == "user" else ai_icon
   with st.chat_message(msg["role"], avatar=avatar):
@@ -125,7 +123,6 @@ if user_msg := st.chat_input(f"{character}にメッセージを送る"):
     st.write(user_msg)
   st.session_state.chat_history.append({"role": "user", "content": user_msg})
 
-  # くるくるローディングを追加
   with st.spinner(f"{character}が一生懸命お返事を書いています...✍️"):
     response = st.session_state.chat_session.send_message(user_msg)
     
@@ -133,5 +130,6 @@ if user_msg := st.chat_input(f"{character}にメッセージを送る"):
       st.write(response.text)
     st.session_state.chat_history.append({"role": "ai", "content": response.text})
 
-    # スプレッドシートに保存
-    log_to_spreadsheet(character, user_msg, response.text)
+    # ★ ここが裏作業化（スレッド化）の魔法です！
+    # 画面の処理を止めずに、裏側でこっそりスプレッドシートに書き込みに行きます
+    threading.Thread(target=log_to_spreadsheet, args=(character, user_msg, response.text)).start()
