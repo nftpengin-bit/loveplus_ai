@@ -32,19 +32,22 @@ def log_to_spreadsheet(character, user_msg, ai_msg):
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    # ★ 修正ポイント: strict=False を追加して、改行エラーを安全に無視する！
     creds_dict = json.loads(st.secrets["GCP_JSON"], strict=False)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     
-    # 「AI会話ログ」という名前のスプレッドシートの1枚目のシートを開く
-    sheet = client.open("AI会話ログ").sheet1
+    # ★ 名前ではなく「URL」で直接あなたのシートを指定する！
+    # 以下の "" の中に、今あなたが見ているスプレッドシートのURLをそのままコピペしてください。
+    sheet_url = "https://docs.google.com/spreadsheets/d/1iRwQtDpjmx4KgsE_b4llauDp5qnQ63rkiYOoDadOQ0g/edit?gid=0#gid=0"
+    sheet = client.open_by_url(sheet_url).sheet1
     
-    # 日時、キャラクター名、ユーザーの発言、AIの返答を追加
+    # 1行目に最新の会話を追加する
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sheet.insert_row([now, character, user_msg, ai_msg], index=1, value_input_option="USER_ENTERED")
   except Exception as e:
-    st.warning(f"スプレッドシート保存エラー: {e}")
+    # 200エラー（成功時の誤報）が出ても無視してアプリを止めないようにする
+    if "200" not in str(e):
+        st.warning(f"スプレッドシート保存エラー: {e}")
 
 # --- 3. サイドバー・キャラ設定 ---
 st.sidebar.title("ヒロイン選択")
