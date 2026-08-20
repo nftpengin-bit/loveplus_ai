@@ -1,6 +1,7 @@
 import ast
 import datetime
 import unittest
+import uuid
 from pathlib import Path
 
 
@@ -56,7 +57,7 @@ for node in TREE.body:
     elif isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS:
         body.append(node)
 
-namespace = {"datetime": datetime}
+namespace = {"datetime": datetime, "uuid": uuid}
 exec(
     compile(ast.Module(body=body, type_ignores=[]), str(APP_PATH), "exec"),
     namespace,
@@ -103,6 +104,7 @@ class SceneStateTests(unittest.TestCase):
         self.assertEqual(
             set(scene_state),
             {
+                "scene_id",
                 "location_id",
                 "previous_location_id",
                 "game_date",
@@ -117,6 +119,7 @@ class SceneStateTests(unittest.TestCase):
             },
         )
         self.assertEqual(scene_state["location_id"], "home_room")
+        self.assertEqual(scene_state["scene_id"], "")
         self.assertEqual(scene_state["previous_location_id"], "home_room")
         self.assertEqual(scene_state["game_date"], "2026-08-20")
         self.assertEqual(scene_state["weekday"], "木曜日")
@@ -134,6 +137,7 @@ class SceneStateTests(unittest.TestCase):
         restaurant = build_action("restaurant_shift", daily_state)
 
         self.assertEqual(tennis["location_id"], "school_tennis_court")
+        self.assertTrue(tennis["scene_id"])
         self.assertEqual(tennis["previous_location_id"], "home_room")
         self.assertEqual(tennis["scene_type"], "encounter")
         self.assertTrue(tennis["scene_changed"])
@@ -142,6 +146,7 @@ class SceneStateTests(unittest.TestCase):
         self.assertEqual(restaurant["location_id"], "family_restaurant")
         self.assertEqual(restaurant["time_slot"], "夕方")
         self.assertEqual(restaurant["character"], "寧々")
+        self.assertNotEqual(tennis["scene_id"], restaurant["scene_id"])
 
     def test_unregistered_location_keeps_current_location(self):
         daily_state = self.build_daily()
@@ -277,7 +282,7 @@ class SceneStateTests(unittest.TestCase):
     def test_scene_state_ui_is_wired(self):
         self.assertIn('st.title("今日の行動")', SOURCE)
         self.assertIn('st.title(scene_location["name"])', SOURCE)
-        self.assertIn('"← 日常へ戻る"', SOURCE)
+        self.assertIn('"← 会話を終えて帰宅"', SOURCE)
         self.assertIn('st.subheader("いつでも会う")', SOURCE)
         self.assertIn("st.session_state.scene_state", SOURCE)
         self.assertIn("build_action_scene_state", SOURCE)
