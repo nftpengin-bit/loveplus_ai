@@ -27,6 +27,7 @@ ASSIGNMENTS = {
     "SCENE_TYPE_LABELS",
     "WEEKDAY_LABELS",
     "LOCATIONS",
+    "BACKGROUND_ASSETS",
     "LEGACY_LOCATION_IDS",
     "SCENE_ACTIONS",
 }
@@ -34,6 +35,8 @@ FUNCTIONS = {
     "get_weekday_label",
     "resolve_location_id",
     "get_location",
+    "get_background_variant",
+    "get_scene_background_asset",
     "create_scene_state",
     "build_daily_scene_state",
     "build_action_scene_state",
@@ -96,6 +99,39 @@ class SceneStateTests(unittest.TestCase):
         )
         self.assertTrue(
             all(action["location_id"] in locations for action in actions.values())
+        )
+
+    def test_home_background_uses_day_asset_with_safe_fallbacks(self):
+        scene_state = self.build_daily()
+        get_variant = namespace["get_background_variant"]
+        get_asset = namespace["get_scene_background_asset"]
+
+        self.assertEqual(get_variant(scene_state), "day")
+        self.assertEqual(
+            get_asset(scene_state),
+            "backgrounds/home/bg_protagonist_room_day.png",
+        )
+
+        evening_state = {**scene_state, "time_slot": "夕方"}
+        self.assertEqual(get_variant(evening_state), "sunset")
+        self.assertEqual(
+            get_asset(evening_state),
+            "backgrounds/home/bg_protagonist_room_day.png",
+        )
+
+        rainy_state = {**scene_state, "weather": "雨"}
+        self.assertEqual(get_variant(rainy_state), "rain")
+        self.assertEqual(
+            get_asset(rainy_state),
+            "backgrounds/home/bg_protagonist_room_day.png",
+        )
+
+        tennis_state = {**scene_state, "location_id": "school_tennis_court"}
+        self.assertEqual(get_asset(tennis_state), "")
+        self.assertTrue(
+            APP_PATH.with_name("backgrounds")
+            .joinpath("home", "bg_protagonist_room_day.png")
+            .is_file()
         )
 
     def test_daily_state_contains_full_scene_fields(self):
@@ -281,6 +317,8 @@ class SceneStateTests(unittest.TestCase):
 
     def test_scene_state_ui_is_wired(self):
         self.assertIn('st.title("今日の行動")', SOURCE)
+        self.assertIn("render_scene_background(daily_scene_state)", SOURCE)
+        self.assertIn("st.image(str(asset_path), use_container_width=True)", SOURCE)
         self.assertIn('st.title(scene_location["name"])', SOURCE)
         self.assertIn('"← 会話を終えて帰宅"', SOURCE)
         self.assertIn('st.subheader("いつでも会う")', SOURCE)
