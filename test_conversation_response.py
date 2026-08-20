@@ -1,4 +1,5 @@
 import ast
+import html
 import json
 import re
 import unittest
@@ -24,6 +25,8 @@ FUNCTIONS = {
     "format_conversation_reply",
     "serialize_reply_for_model",
     "make_assistant_history_message",
+    "html_text",
+    "build_loveplus_reply_html",
 }
 
 body = []
@@ -39,7 +42,7 @@ for node in TREE.body:
     elif isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS:
         body.append(node)
 
-namespace = {"json": json, "re": re}
+namespace = {"html": html, "json": json, "re": re}
 exec(
     compile(ast.Module(body=body, type_ignores=[]), str(APP_PATH), "exec"),
     namespace,
@@ -157,6 +160,47 @@ class ConversationResponseTests(unittest.TestCase):
         self.assertIn("response_schema=CONVERSATION_RESPONSE_SCHEMA", SOURCE)
         self.assertIn("地の文とセリフを混ぜず", SOURCE)
         self.assertIn("render_assistant_message", SOURCE)
+
+    def test_loveplus_reply_ui_is_integrated_without_narration_label(self):
+        reply = {
+            "narration": "愛花は少し驚いたように目を丸くした。",
+            "dialogue": "あ、のりおくん。\nこんにちは。",
+        }
+
+        rendered = namespace["build_loveplus_reply_html"](reply, "愛花")
+
+        self.assertIn('class="loveplus-narration"', rendered)
+        self.assertIn('class="loveplus-dialogue-window"', rendered)
+        self.assertIn('class="loveplus-speaker-tab">愛花</div>', rendered)
+        self.assertIn("あ、のりおくん。<br>こんにちは。", rendered)
+        self.assertNotIn("地の文", rendered)
+        self.assertEqual(rendered.count("loveplus-dialogue-window"), 1)
+        self.assertNotIn("st.container(border=True)", SOURCE)
+
+    def test_loveplus_reply_ui_escapes_generated_html(self):
+        reply = {
+            "narration": '<script>alert("x")</script>',
+            "dialogue": "<b>こんにちは</b>",
+        }
+
+        rendered = namespace["build_loveplus_reply_html"](
+            reply, '<img src=x onerror="alert(1)">'
+        )
+
+        self.assertNotIn("<script>", rendered)
+        self.assertNotIn("<b>こんにちは</b>", rendered)
+        self.assertNotIn("<img", rendered)
+        self.assertIn("&lt;script&gt;", rendered)
+        self.assertIn("&lt;b&gt;こんにちは&lt;/b&gt;", rendered)
+
+    def test_loveplus_reply_ui_omits_empty_narration(self):
+        rendered = namespace["build_loveplus_reply_html"](
+            {"narration": "", "dialogue": "うん。"},
+            "愛花",
+        )
+
+        self.assertNotIn("loveplus-narration", rendered)
+        self.assertIn("うん。", rendered)
 
 
 if __name__ == "__main__":

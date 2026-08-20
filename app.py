@@ -1,5 +1,6 @@
 import datetime
 import hmac
+import html
 import json
 import re
 from pathlib import Path
@@ -832,29 +833,136 @@ icons = {
     "寧々": "nene_icon.png",
 }
 
+st.markdown(
+    """
+    <style>
+    .loveplus-reply {
+        margin: 0.1rem 0 0.55rem;
+    }
+
+    .loveplus-narration {
+        color: #6b7280;
+        font-size: 0.94rem;
+        line-height: 1.8;
+        margin: 0.2rem 0.35rem 0.95rem;
+    }
+
+    .loveplus-dialogue-window {
+        position: relative;
+        margin-top: 0.75rem;
+        padding: 1.65rem 1.15rem 1.05rem;
+        border: 1px solid rgba(226, 130, 158, 0.58);
+        border-left: 4px solid #e2829e;
+        border-radius: 0.35rem 0.95rem 0.95rem 0.95rem;
+        background: linear-gradient(
+            145deg,
+            rgba(255, 255, 255, 0.98),
+            rgba(255, 246, 249, 0.96)
+        );
+        box-shadow: 0 0.35rem 1rem rgba(100, 70, 82, 0.07);
+    }
+
+    .loveplus-speaker-tab {
+        position: absolute;
+        top: -0.72rem;
+        left: 0.75rem;
+        min-width: 4.7rem;
+        padding: 0.18rem 0.9rem;
+        border: 1px solid rgba(226, 130, 158, 0.58);
+        border-radius: 0.45rem 0.45rem 0.2rem 0.2rem;
+        background: #fff5f8;
+        color: #7d334b;
+        font-size: 0.86rem;
+        font-weight: 700;
+        line-height: 1.45;
+        text-align: center;
+    }
+
+    .loveplus-dialogue-text {
+        color: #27272a;
+        font-size: 1.04rem;
+        line-height: 1.85;
+        letter-spacing: 0.01em;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .loveplus-narration {
+            color: #b8bcc5;
+        }
+
+        .loveplus-dialogue-window {
+            border-color: rgba(235, 154, 177, 0.62);
+            border-left-color: #eb9ab1;
+            background: linear-gradient(
+                145deg,
+                rgba(45, 39, 43, 0.98),
+                rgba(54, 40, 46, 0.96)
+            );
+        }
+
+        .loveplus-speaker-tab {
+            border-color: rgba(235, 154, 177, 0.62);
+            background: #4d343d;
+            color: #ffd9e4;
+        }
+
+        .loveplus-dialogue-text {
+            color: #faf7f8;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def existing_avatar(path: str, fallback: str):
     return path if Path(path).is_file() else fallback
 
 
+def html_text(value: str) -> str:
+    """AI生成文を安全にHTMLへ埋め込み、改行だけを表示へ反映する。"""
+    return html.escape(str(value), quote=True).replace("\n", "<br>")
+
+
+def build_loveplus_reply_html(reply: dict, speaker: str) -> str:
+    """地の文と名前付きセリフを、ひと続きのゲーム会話として整形する。"""
+    narration = str(reply.get("narration") or "").strip()
+    dialogue = str(reply.get("dialogue") or "……").strip()
+    safe_speaker = html_text(speaker)
+
+    narration_html = ""
+    if narration:
+        narration_html = (
+            '<div class="loveplus-narration">'
+            f"{html_text(narration)}"
+            "</div>"
+        )
+
+    return (
+        '<div class="loveplus-reply">'
+        f"{narration_html}"
+        '<div class="loveplus-dialogue-window">'
+        f'<div class="loveplus-speaker-tab">{safe_speaker}</div>'
+        '<div class="loveplus-dialogue-text">'
+        f"{html_text(dialogue)}"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+
+
 def render_assistant_message(message: dict, speaker: str) -> None:
-    """新形式は地の文とセリフを別カード、旧形式は従来どおり表示する。"""
+    """新形式はラブプラス風の一体表示、旧形式は従来どおり表示する。"""
     reply = message.get("reply")
     if not isinstance(reply, dict):
         st.write(message["content"])
         return
 
-    narration = str(reply.get("narration") or "").strip()
-    dialogue = str(reply.get("dialogue") or "……").strip()
-
-    if narration:
-        with st.container(border=True):
-            st.caption("地の文")
-            st.write(narration)
-
-    with st.container(border=True):
-        st.markdown(f"**{speaker}**")
-        st.write(dialogue)
+    st.markdown(
+        build_loveplus_reply_html(reply, speaker),
+        unsafe_allow_html=True,
+    )
 
 
 ai_icon = existing_avatar(icons[character], "👩")
