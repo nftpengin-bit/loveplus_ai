@@ -1,3 +1,4 @@
+import base64
 import datetime
 import hmac
 import html
@@ -1485,18 +1486,163 @@ st.markdown(
         letter-spacing: 0.01em;
     }
 
-    .daily-overview {
-        margin: 0.25rem 0 1.25rem;
-        padding: 0.85rem 1rem;
-        border-radius: 0.8rem;
-        background: #eaf3ff;
-        color: #155a91;
-        font-size: 0.96rem;
-        line-height: 1.75;
+    .daily-scene-stage {
+        position: relative;
+        width: min(100%, 42rem);
+        margin: 0.25rem auto 1.1rem;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.72);
+        border-radius: 1.2rem;
+        background: #dfe7ee;
+        box-shadow: 0 1rem 2.4rem rgba(43, 55, 72, 0.16);
+        isolation: isolate;
     }
 
-    div[data-testid="stImage"] img {
-        border-radius: 0.9rem;
+    .daily-scene-stage--landscape {
+        aspect-ratio: 16 / 9;
+    }
+
+    .daily-scene-stage--portrait {
+        width: min(100%, 42.75svh, 31rem);
+        aspect-ratio: 9 / 16;
+    }
+
+    .daily-scene-stage__image {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center;
+        z-index: -2;
+    }
+
+    .daily-scene-stage__shade {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+            180deg,
+            rgba(21, 30, 43, 0.5) 0%,
+            rgba(21, 30, 43, 0.02) 31%,
+            rgba(21, 30, 43, 0.04) 56%,
+            rgba(21, 30, 43, 0.72) 100%
+        );
+        z-index: -1;
+    }
+
+    .daily-scene-hud {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.65rem;
+        padding: 0.8rem;
+        color: #fff;
+    }
+
+    .daily-scene-hud__date,
+    .daily-scene-hud__status {
+        padding: 0.45rem 0.65rem;
+        border: 1px solid rgba(255, 255, 255, 0.32);
+        border-radius: 0.75rem;
+        background: rgba(24, 35, 51, 0.58);
+        box-shadow: 0 0.3rem 0.8rem rgba(0, 0, 0, 0.12);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+    }
+
+    .daily-scene-hud__date {
+        font-size: 0.82rem;
+        font-weight: 800;
+        line-height: 1.45;
+    }
+
+    .daily-scene-hud__status {
+        font-size: 0.78rem;
+        line-height: 1.55;
+        text-align: right;
+    }
+
+    .daily-scene-location {
+        position: absolute;
+        top: 4.75rem;
+        right: 0.8rem;
+        padding: 0.3rem 0.65rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.84);
+        color: #334155;
+        font-size: 0.76rem;
+        font-weight: 800;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+    }
+
+    .daily-scene-monologue {
+        position: absolute;
+        right: 0.8rem;
+        bottom: 0.8rem;
+        left: 0.8rem;
+        padding: 1rem 1rem 0.9rem;
+        border: 1px solid rgba(255, 255, 255, 0.42);
+        border-radius: 0.95rem;
+        background: rgba(18, 26, 39, 0.78);
+        color: #fff;
+        box-shadow: 0 0.5rem 1.2rem rgba(0, 0, 0, 0.18);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        min-height: 18%;
+    }
+
+    .daily-scene-monologue__speaker {
+        display: inline-block;
+        margin: -1.55rem 0 0.45rem;
+        padding: 0.18rem 0.75rem;
+        border-radius: 999px;
+        background: #fff;
+        color: #536579;
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+    }
+
+    .daily-scene-monologue__text {
+        font-size: 0.98rem;
+        line-height: 1.65;
+        letter-spacing: 0.01em;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+
+    .daily-action-heading {
+        margin: 1.1rem 0 0.25rem;
+        color: #334155;
+        font-size: 1.1rem;
+        font-weight: 800;
+    }
+
+    .daily-action-copy {
+        min-height: 3.15rem;
+        padding: 0.1rem 0.1rem 0.35rem;
+    }
+
+    .daily-action-title {
+        color: #27364a;
+        font-size: 1rem;
+        font-weight: 800;
+        line-height: 1.5;
+    }
+
+    .daily-action-description {
+        margin-top: 0.18rem;
+        color: #7a8492;
+        font-size: 0.83rem;
+        line-height: 1.55;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-color: rgba(155, 174, 196, 0.35);
+        border-radius: 1rem;
+        background: linear-gradient(145deg, #ffffff, #f7faff);
+        box-shadow: 0 0.35rem 1rem rgba(64, 83, 108, 0.06);
     }
 
     .scene-intro {
@@ -1525,6 +1671,35 @@ st.markdown(
         .loveplus-dialogue-text {
             font-size: 1rem;
             line-height: 1.72;
+        }
+
+        .daily-scene-stage {
+            border-radius: 1rem;
+        }
+
+        .daily-scene-stage--portrait {
+            width: 100%;
+        }
+
+        .daily-scene-hud {
+            padding: 0.65rem;
+        }
+
+        .daily-scene-location {
+            top: 4.4rem;
+            right: 0.65rem;
+        }
+
+        .daily-scene-monologue {
+            right: 0.65rem;
+            bottom: 0.65rem;
+            left: 0.65rem;
+            padding: 0.9rem 0.85rem 0.75rem;
+        }
+
+        .daily-scene-monologue__text {
+            font-size: 0.9rem;
+            line-height: 1.55;
         }
     }
 
@@ -1647,17 +1822,114 @@ def return_to_daily() -> None:
     st.rerun()
 
 
-def render_scene_background(scene_state: dict) -> None:
-    """横長の場面背景を、比率を保ったまま画面幅へ合わせて表示する。"""
+def resolve_scene_background_path(scene_state: dict) -> Path | None:
+    """登録済みの場面背景が存在する場合だけ、実ファイルのパスを返す。"""
     relative_asset_path = get_scene_background_asset(scene_state)
     if not relative_asset_path:
-        return
+        return None
 
     asset_path = Path(__file__).resolve().parent / relative_asset_path
     if not asset_path.is_file():
-        return
+        return None
 
-    st.image(str(asset_path), use_container_width=True)
+    return asset_path
+
+
+def get_background_orientation(asset_path: Path) -> str:
+    """PNGの寸法から、既存横長版と今後の縦長版を自動判別する。"""
+    try:
+        with asset_path.open("rb") as source:
+            header = source.read(24)
+        if header[:8] == b"\x89PNG\r\n\x1a\n" and len(header) >= 24:
+            width = int.from_bytes(header[16:20], "big")
+            height = int.from_bytes(header[20:24], "big")
+            if height > width:
+                return "portrait"
+    except OSError:
+        pass
+
+    return "landscape"
+
+
+@st.cache_data(show_spinner=False)
+def load_background_data_uri(asset_path: str, modified_ns: int) -> str:
+    """背景画像をHTMLステージ内で表示できるdata URIへ変換する。"""
+    del modified_ns  # 更新時刻をキャッシュキーとしてだけ使用する。
+    encoded = base64.b64encode(Path(asset_path).read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def build_daily_stage_html(
+    *,
+    image_data_uri: str,
+    orientation: str,
+    date_label: str,
+    weekday: str,
+    time_slot: str,
+    weather: str,
+    location_name: str,
+    intro: str,
+) -> str:
+    """日付・現在地・主人公の独白を背景へ重ねたゲーム画面を組み立てる。"""
+    stage_orientation = (
+        "portrait" if orientation == "portrait" else "landscape"
+    )
+    safe_image_uri = html.escape(image_data_uri, quote=True)
+
+    return (
+        f'<div class="daily-scene-stage daily-scene-stage--{stage_orientation}">'
+        f'<img class="daily-scene-stage__image" src="{safe_image_uri}" '
+        f'alt="{html.escape(location_name, quote=True)}の背景">'
+        '<div class="daily-scene-stage__shade"></div>'
+        '<div class="daily-scene-hud">'
+        '<div class="daily-scene-hud__date">'
+        f"{html_text(date_label)}<br>{html_text(weekday)}"
+        "</div>"
+        '<div class="daily-scene-hud__status">'
+        f"🕒 {html_text(time_slot)}<br>🌦️ {html_text(weather)}"
+        "</div>"
+        "</div>"
+        '<div class="daily-scene-location">'
+        f"📍 {html_text(location_name)}"
+        "</div>"
+        '<div class="daily-scene-monologue">'
+        '<div class="daily-scene-monologue__speaker">主人公</div>'
+        '<div class="daily-scene-monologue__text">'
+        f"{html_text(intro)}"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+
+
+def render_daily_scene_stage(
+    scene_state: dict,
+    date_label: str,
+    location_name: str,
+) -> bool:
+    """背景の向きを保ち、縦長素材追加後は自動で9:16ステージへ切り替える。"""
+    asset_path = resolve_scene_background_path(scene_state)
+    if asset_path is None:
+        return False
+
+    image_data_uri = load_background_data_uri(
+        str(asset_path),
+        asset_path.stat().st_mtime_ns,
+    )
+    st.markdown(
+        build_daily_stage_html(
+            image_data_uri=image_data_uri,
+            orientation=get_background_orientation(asset_path),
+            date_label=date_label,
+            weekday=scene_state["weekday"],
+            time_slot=scene_state["time_slot"],
+            weather=scene_state["weather"],
+            location_name=location_name,
+            intro=scene_state["intro"],
+        ),
+        unsafe_allow_html=True,
+    )
+    return True
 
 
 def render_daily_screen() -> None:
@@ -1682,39 +1954,51 @@ def render_daily_screen() -> None:
     date_label = parsed_date.strftime("%Y年%m月%d日")
 
     st.title("今日の行動")
-    render_scene_background(daily_scene_state)
+    stage_rendered = render_daily_scene_stage(
+        daily_scene_state,
+        date_label,
+        current_location["name"],
+    )
+    if not stage_rendered:
+        st.info(
+            f"{date_label}・{daily_scene_state['weekday']} ｜ "
+            f"{daily_scene_state['time_slot']} ｜ "
+            f"{daily_scene_state['weather']} ｜ "
+            f"現在地: {current_location['name']}\n\n"
+            f"{daily_scene_state['intro']}"
+        )
+
     st.markdown(
-        '<div class="daily-overview">'
-        f"<strong>{html_text(date_label)}・"
-        f"{html_text(daily_scene_state['weekday'])}</strong><br>"
-        f"🕒 時間帯: {html_text(daily_scene_state['time_slot'])}　"
-        f"🌦️ 天気: {html_text(daily_scene_state['weather'])}<br>"
-        f"🏠 現在地: {html_text(current_location['name'])}"
-        "</div>",
+        '<div class="daily-action-heading">行き先を選ぶ</div>',
         unsafe_allow_html=True,
     )
-    st.write(daily_scene_state["intro"])
-
-    st.subheader("行き先を選ぶ")
     action_items = list(SCENE_ACTIONS.items())
-    for index, (action_id, action) in enumerate(action_items):
-        st.markdown(f"**{action['icon']} {action['title']}**")
-        st.caption(action["description"])
-        if st.button(
-            "ここへ行く",
-            key=f"daily_action_{action_id}",
-            use_container_width=True,
-        ):
-            enter_scene(
-                build_action_scene_state(
-                    action_id,
-                    daily_scene_state,
-                )
+    for action_id, action in action_items:
+        with st.container(border=True):
+            st.markdown(
+                '<div class="daily-action-copy">'
+                '<div class="daily-action-title">'
+                f"{html_text(action['icon'])} {html_text(action['title'])}"
+                "</div>"
+                '<div class="daily-action-description">'
+                f"{html_text(action['description'])}"
+                "</div>"
+                "</div>",
+                unsafe_allow_html=True,
             )
-        if index < len(action_items) - 1:
-            st.divider()
+            if st.button(
+                "この場所へ向かう",
+                key=f"daily_action_{action_id}",
+                use_container_width=True,
+                type="primary",
+            ):
+                enter_scene(
+                    build_action_scene_state(
+                        action_id,
+                        daily_scene_state,
+                    )
+                )
 
-    st.divider()
     unlocked_characters = [
         name
         for name in CHARACTERS
@@ -1722,23 +2006,23 @@ def render_daily_screen() -> None:
             st.session_state.game_state[name]["love_points"]
         )
     ]
-    st.subheader("いつでも会う")
-    if unlocked_characters:
-        st.caption("恋人になったカノジョに、好きなときに会いに行けます。")
-        for name in unlocked_characters:
-            if st.button(
-                f"💞 {name}に会う",
-                key=f"free_talk_{name}",
-                use_container_width=True,
-            ):
-                enter_scene(
-                    build_free_talk_scene_state(
-                        name,
-                        daily_scene_state,
+    with st.expander("💞 いつでも会う"):
+        if unlocked_characters:
+            st.caption("恋人になったカノジョに、好きなときに会いに行けます。")
+            for name in unlocked_characters:
+                if st.button(
+                    f"{name}に会う",
+                    key=f"free_talk_{name}",
+                    use_container_width=True,
+                ):
+                    enter_scene(
+                        build_free_talk_scene_state(
+                            name,
+                            daily_scene_state,
+                        )
                     )
-                )
-    else:
-        st.caption("恋人になると『いつでも会う』が解禁されます。")
+        else:
+            st.caption("恋人になると『いつでも会う』が解禁されます。")
 
     with st.expander("みんなとの関係"):
         for name in CHARACTERS:
