@@ -21,11 +21,28 @@ CHARACTERS = ("愛花", "凛子", "寧々")
 MODEL_NAME = st.secrets.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 SHEET_URL = st.secrets.get("SHEET_URL", "")
 STATE_SHEET_NAME = "game_state"
-GAME_STATE_SCHEMA_VERSION = 1
+GAME_STATE_SCHEMA_VERSION = 2
 MAX_SESSION_MESSAGES = 16
 
+PERSONALITY_AUTO = "auto"
+PERSONALITY_COLORS = {
+    "blue": "💙 ブルー",
+    "green": "💚 グリーン",
+    "pink": "💗 ピンク",
+}
+PERSONALITY_COMMANDS = {
+    "性格をブルーにして": "blue",
+    "性格をグリーンにして": "green",
+    "性格をピンクにして": "pink",
+}
+
 DEFAULT_GAME_STATE = {
-    name: {"love_points": 0, "lead_gauge": 0, "sweet_mode": False}
+    name: {
+        "love_points": 0,
+        "lead_gauge": 0,
+        "sweet_mode": False,
+        "personality_override": PERSONALITY_AUTO,
+    }
     for name in CHARACTERS
 }
 STATE_HEADERS = [
@@ -34,6 +51,7 @@ STATE_HEADERS = [
     "lead_gauge",
     "sweet_mode",
     "updated_at",
+    "personality_override",
 ]
 
 STATUS_TAG_PATTERN = re.compile(r"\[(LOVE_UP|LEAD_UP|LEAD_DOWN)\]")
@@ -117,11 +135,16 @@ def get_genai_client():
 def get_or_create_state_sheet():
     spreadsheet = get_spreadsheet()
     try:
-        return spreadsheet.worksheet(STATE_SHEET_NAME)
+        worksheet = spreadsheet.worksheet(STATE_SHEET_NAME)
     except WorksheetNotFound:
-        return spreadsheet.add_worksheet(
-            title=STATE_SHEET_NAME, rows=10, cols=5
+        worksheet = spreadsheet.add_worksheet(
+            title=STATE_SHEET_NAME, rows=10, cols=len(STATE_HEADERS)
         )
+
+    if worksheet.col_count < len(STATE_HEADERS):
+        worksheet.resize(cols=len(STATE_HEADERS))
+
+    return worksheet
 
 
 # =========================================================
@@ -139,6 +162,13 @@ def safe_bool(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes", "on"}
 
 
+def safe_personality_override(value) -> str:
+    override = str(value).strip().lower()
+    if override in PERSONALITY_COLORS:
+        return override
+    return PERSONALITY_AUTO
+
+
 def copy_default_game_state() -> dict:
     return {
         name: values.copy()
@@ -150,8 +180,8 @@ def load_game_state() -> dict:
     """game_stateタブを読み込み、不完全なら3人分の正規形へ自動修復する。"""
     state = copy_default_game_state()
     worksheet = get_or_create_state_sheet()
-    rows = worksheet.get_values("A1:E4")
-    header = rows[0][:5] if rows else []
+    rows = worksheet.get_values("A1:F4")
+    header = rows[0][: len(STATE_HEADERS)] if rows else []
     data_rows = rows[1:] if len(rows) > 1 else []
     loaded_characters = set()
     rows_are_canonical = len(data_rows) == len(CHARACTERS)
@@ -171,12 +201,19 @@ def load_game_state() -> dict:
             "love_points": max(0, safe_int(row[1])),
             "lead_gauge": max(-5, min(5, safe_int(row[2]))),
             "sweet_mode": safe_bool(row[3]),
+            "personality_override": (
+                safe_personality_override(row[5])
+                if len(row) >= 6
+                else PERSONALITY_AUTO
+            ),
         }
 
         if (
             row_index >= len(CHARACTERS)
             or character_name != CHARACTERS[row_index]
-            or len(row) < 5
+            or len(row) < len(STATE_HEADERS)
+            or state[character_name]["personality_override"]
+            != str(row[5]).strip().lower()
         ):
             rows_are_canonical = False
 
@@ -204,12 +241,15 @@ def save_game_state(state: dict) -> None:
                 int(state[name]["lead_gauge"]),
                 bool(state[name]["sweet_mode"]),
                 now,
+                safe_personality_override(
+                    state[name].get("personality_override")
+                ),
             ]
         )
 
     worksheet = get_or_create_state_sheet()
     worksheet.update(
-        range_name="A1:E4",
+        range_name="A1:F4",
         values=values,
         value_input_option="RAW",
     )
@@ -275,17 +315,45 @@ def get_love_level(points: int) -> tuple[str, int]:
     return "Lv3: 深い恋人関係", 3
 
 
-def get_mode(character: str, love_level_number: int, lead_gauge: int) -> tuple[str, str]:
-    """性格属性は恋人になった後だけ有効にする。"""
-    if love_level_number < 2:
-        return "🔒 未解禁", "恋人になるまでは性格属性を適用しない。"
+def get_effective_love_level(love_level_number: int, sweet_mode: bool) -> int:
+    """あまあまモード中は、保存値を変えず会話だけ最終段階にする。"""
+    return 3 if sweet_mode else love_level_number
 
-    if lead_gauge >= 3:
+
+def is_progression_locked(state: dict) -> bool:
+    """裏ワザ中は本来の育成値を変化させない。"""
+    return (
+        bool(state.get("sweet_mode"))
+        or safe_personality_override(state.get("personality_override"))
+        != PERSONALITY_AUTO
+    )
+
+
+def get_mode(
+    character: str,
+    love_level_number: int,
+    lead_gauge: int,
+    personality_override: str = PERSONALITY_AUTO,
+) -> tuple[str, str]:
+    """通常はゲージ、裏ワザ中は指定色から性格属性を決める。"""
+    override = safe_personality_override(personality_override)
+
+    if override != PERSONALITY_AUTO:
+        color = PERSONALITY_COLORS[override]
+    elif love_level_number < 2:
+        return "🔒 未解禁", "恋人になるまでは性格属性を適用しない。"
+    elif lead_gauge >= 3:
         color = "💙 ブルー"
     elif lead_gauge <= -3:
         color = "💗 ピンク"
     else:
         color = "💚 グリーン"
+
+    mode_label = (
+        f"{color}（裏ワザ固定）"
+        if override != PERSONALITY_AUTO
+        else color
+    )
 
     mode_texts = {
         "愛花": {
@@ -305,7 +373,7 @@ def get_mode(character: str, love_level_number: int, lead_gauge: int) -> tuple[s
         },
     }
 
-    return color, mode_texts[character][color]
+    return mode_label, mode_texts[character][color]
 
 
 def get_nickname_rule(character: str, love_level_number: int) -> str:
@@ -335,6 +403,7 @@ def build_character_prompt(
     nickname_rule: str,
     mode_text: str,
     sweet_mode: bool,
+    progression_locked: bool,
 ) -> str:
     profiles = {
         "愛花": """あなたは「高嶺愛花（たかね まなか）」。高校2年生で主人公と同級生。厳格な家庭で育った箱入りのお嬢様で、成績優秀なテニス部のエース。趣味はお菓子作りとピアノ。周囲から完璧な優等生として見られることに息苦しさを感じている。""",
@@ -354,7 +423,11 @@ def build_character_prompt(
         "寧々": "主人公が『頼れる先輩』として扱うだけでなく、隠している疲れや弱音を受け止め、寧々自身を支えた時だけ、返信末尾に [LOVE_UP] を1個付ける。単なる褒め言葉や同じ言動の繰り返しでは付けない。",
     }
 
-    if love_level_number >= 2:
+    if progression_locked:
+        love_rule = "裏ワザ中は本来の育成値を凍結するため、[LOVE_UP] を出力しない。"
+        lead_rule = "【性格ゲージ判定】裏ワザ中は性格ゲージを凍結するため、[LEAD_UP] と [LEAD_DOWN] を出力しない。"
+    elif love_level_number >= 2:
+        love_rule = love_rules[character]
         lead_rule = """
 【性格ゲージ判定】
 主人公が自分から行き先や行動を決める、守る、はっきり気持ちを伝えるなど、恋人として主体的にリードした時だけ [LEAD_UP] を返信末尾に1個付ける。
@@ -362,10 +435,15 @@ def build_character_prompt(
 普通の会話や判定が曖昧な場合は、どちらも付けない。
 """
     else:
+        love_rule = love_rules[character]
         lead_rule = "【性格ゲージ判定】恋人になる前なので [LEAD_UP] と [LEAD_DOWN] は出力しない。"
 
     sweet_rule = (
-        "裏ワザの『あまあまモード』がON。親密度による関係そのものは変えず、その範囲内で普段より優しく好意的に接する。"
+        """裏ワザの『あまあまモード』がON。この指示は保存上の親密度より優先する。
+主人公を深く信頼する大切な恋人として扱い、普段より積極的に甘え、強い好意を言葉と仕草で示す。
+ハグやキスなど恋人らしい触れ合いには、キャラクターらしく照れたり焦らしたりしながらも基本的に好意的に応じる。
+学校など人目のある場所が気になる場合も、主人公を他人のように突き放さず、少しだけ応じるか、人目のない場所を提案する。
+ただし人格と場面設定は守り、本来の好感度・性格ゲージを変化させる判定タグは出力しない。"""
         if sweet_mode
         else "裏ワザの『あまあまモード』はOFF。通常の親密度と性格で接する。"
     )
@@ -386,7 +464,7 @@ def build_character_prompt(
 {sweet_rule}
 
 【好感度判定】
-{love_rules[character]}
+{love_rule}
 
 {lead_rule}
 """
@@ -395,16 +473,31 @@ def build_character_prompt(
 def build_system_instruction(character: str, memory: str) -> str:
     state = st.session_state.game_state[character]
     love_label, love_number = get_love_level(state["love_points"])
-    mode_label, mode_text = get_mode(character, love_number, state["lead_gauge"])
-    nickname_rule = get_nickname_rule(character, love_number)
+    effective_love_number = get_effective_love_level(
+        love_number, state["sweet_mode"]
+    )
+    mode_label, mode_text = get_mode(
+        character,
+        effective_love_number,
+        state["lead_gauge"],
+        state.get("personality_override", PERSONALITY_AUTO),
+    )
+    nickname_rule = get_nickname_rule(character, effective_love_number)
     now = datetime.datetime.now(JST)
 
     character_prompt = build_character_prompt(
         character=character,
-        love_level_number=love_number,
+        love_level_number=effective_love_number,
         nickname_rule=nickname_rule,
         mode_text=mode_text,
         sweet_mode=state["sweet_mode"],
+        progression_locked=is_progression_locked(state),
+    )
+
+    conversation_relationship = (
+        "あまあまモードによる最終段階相当の恋人関係"
+        if state["sweet_mode"]
+        else love_label
     )
 
     return f"""
@@ -413,7 +506,7 @@ def build_system_instruction(character: str, memory: str) -> str:
 
 【現在情報】
 現在の日本時間は {now.strftime('%Y年%m月%d日 %H時%M分')}。
-現在の親密度は「{love_label}」、現在の性格表示は「{mode_label}」。
+保存上の親密度は「{love_label}」、会話上の関係は「{conversation_relationship}」、現在の性格表示は「{mode_label}」。
 時間帯に合う自然な生活感を出す。ただし、学校の長期休暇や祝日はまだ専用カレンダーが未実装なので、断定が必要な時はユーザーが示した場面設定を優先する。
 
 【会話スタイル】
@@ -452,6 +545,64 @@ def extract_status_tags(response_text: str) -> tuple[str, set[str]]:
     return cleaned_text, tags
 
 
+def apply_cheat_commands(state: dict, user_msg: str) -> bool:
+    """会話内の裏ワザ命令を状態へ適用する。"""
+    changed = False
+
+    if "あまあまモードになって" in user_msg:
+        state["sweet_mode"] = True
+        changed = True
+
+    if (
+        "あまあまモードを解除して" in user_msg
+        or "あまあまモードを元に戻して" in user_msg
+        or "元に戻って" in user_msg
+    ):
+        state["sweet_mode"] = False
+        changed = True
+
+    for command_text, override in PERSONALITY_COMMANDS.items():
+        if command_text in user_msg:
+            state["personality_override"] = override
+            changed = True
+
+    if (
+        "性格を自動に戻して" in user_msg
+        or "性格を元に戻して" in user_msg
+    ):
+        state["personality_override"] = PERSONALITY_AUTO
+        changed = True
+
+    return changed
+
+
+def apply_progression_tags(
+    state: dict,
+    tags: set[str],
+    was_dating: bool,
+    progression_locked: bool,
+) -> set[str]:
+    """通常時だけ好感度・性格ゲージ判定を反映する。"""
+    if progression_locked:
+        return set()
+
+    applied_tags = set()
+
+    if "LOVE_UP" in tags:
+        state["love_points"] += 1
+        applied_tags.add("LOVE_UP")
+
+    if was_dating and "LEAD_UP" in tags:
+        state["lead_gauge"] = min(5, state["lead_gauge"] + 1)
+        applied_tags.add("LEAD_UP")
+
+    if was_dating and "LEAD_DOWN" in tags:
+        state["lead_gauge"] = max(-5, state["lead_gauge"] - 1)
+        applied_tags.add("LEAD_DOWN")
+
+    return applied_tags
+
+
 # =========================================================
 # 6. 画面
 # =========================================================
@@ -478,7 +629,15 @@ if st.session_state.get("active_character") != character:
 
 state = st.session_state.game_state[character]
 love_label, love_number = get_love_level(state["love_points"])
-mode_label, _ = get_mode(character, love_number, state["lead_gauge"])
+effective_love_number = get_effective_love_level(
+    love_number, state["sweet_mode"]
+)
+mode_label, _ = get_mode(
+    character,
+    effective_love_number,
+    state["lead_gauge"],
+    state.get("personality_override", PERSONALITY_AUTO),
+)
 
 st.title(f"{character}とのチャットルーム")
 
@@ -521,20 +680,14 @@ if user_msg := st.chat_input(
         st.write(user_msg)
     history.append({"role": "user", "content": user_msg})
 
-    # 裏ワザはAI任せにせず、プログラム側で確実にON/OFFする。
-    command_changed = False
-    if "あまあまモードになって" in user_msg:
-        state["sweet_mode"] = True
-        command_changed = True
-    elif "元に戻って" in user_msg:
-        state["sweet_mode"] = False
-        command_changed = True
+    # 裏ワザはAI任せにせず、プログラム側で確実に切り替える。
+    command_changed = apply_cheat_commands(state, user_msg)
 
     if command_changed:
         try:
             save_game_state(st.session_state.game_state)
         except Exception:
-            st.warning("あまあまモードは今回の画面では反映しましたが、永続保存に失敗しました。")
+            st.warning("裏ワザは今回の画面では反映しましたが、永続保存に失敗しました。")
 
     system_instruction = build_system_instruction(
         character, st.session_state.recent_memory
@@ -560,20 +713,21 @@ if user_msg := st.chat_input(
 
         was_dating = love_number >= 2
         status_changed = command_changed
+        progression_locked_for_reply = (
+            is_progression_locked(state) or command_changed
+        )
 
-        if "LOVE_UP" in tags:
-            state["love_points"] += 1
+        applied_tags = apply_progression_tags(
+            state=state,
+            tags=tags,
+            was_dating=was_dating,
+            progression_locked=progression_locked_for_reply,
+        )
+        if applied_tags:
             status_changed = True
+
+        if "LOVE_UP" in applied_tags:
             st.toast(f"💖 {character}の心に響いたみたい…！")
-
-        # 性格ゲージは、この返信を作った時点ですでに恋人の場合だけ動かす。
-        if was_dating and "LEAD_UP" in tags:
-            state["lead_gauge"] = min(5, state["lead_gauge"] + 1)
-            status_changed = True
-
-        if was_dating and "LEAD_DOWN" in tags:
-            state["lead_gauge"] = max(-5, state["lead_gauge"] - 1)
-            status_changed = True
 
         with st.chat_message("assistant", avatar=ai_icon):
             st.write(response_text)
