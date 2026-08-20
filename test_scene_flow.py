@@ -1,5 +1,6 @@
 import ast
 import datetime
+import html
 import unittest
 import uuid
 from pathlib import Path
@@ -45,6 +46,9 @@ FUNCTIONS = {
     "format_scene_instruction",
     "get_love_level",
     "is_free_talk_unlocked",
+    "html_text",
+    "build_daily_stage_html",
+    "get_background_orientation",
 }
 
 body = []
@@ -60,7 +64,12 @@ for node in TREE.body:
     elif isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS:
         body.append(node)
 
-namespace = {"datetime": datetime, "uuid": uuid}
+namespace = {
+    "Path": Path,
+    "datetime": datetime,
+    "html": html,
+    "uuid": uuid,
+}
 exec(
     compile(ast.Module(body=body, type_ignores=[]), str(APP_PATH), "exec"),
     namespace,
@@ -132,6 +141,13 @@ class SceneStateTests(unittest.TestCase):
             APP_PATH.with_name("backgrounds")
             .joinpath("home", "bg_protagonist_room_day.png")
             .is_file()
+        )
+        self.assertEqual(
+            namespace["get_background_orientation"](
+                APP_PATH.with_name("backgrounds")
+                .joinpath("home", "bg_protagonist_room_day.png")
+            ),
+            "landscape",
         )
 
     def test_daily_state_contains_full_scene_fields(self):
@@ -317,11 +333,14 @@ class SceneStateTests(unittest.TestCase):
 
     def test_scene_state_ui_is_wired(self):
         self.assertIn('st.title("今日の行動")', SOURCE)
-        self.assertIn("render_scene_background(daily_scene_state)", SOURCE)
-        self.assertIn("st.image(str(asset_path), use_container_width=True)", SOURCE)
+        self.assertIn("render_daily_scene_stage(", SOURCE)
+        self.assertIn('class="daily-scene-stage', SOURCE)
+        self.assertIn('class="daily-scene-monologue', SOURCE)
+        self.assertIn("get_background_orientation(asset_path)", SOURCE)
+        self.assertIn('type="primary"', SOURCE)
         self.assertIn('st.title(scene_location["name"])', SOURCE)
         self.assertIn('"← 会話を終えて帰宅"', SOURCE)
-        self.assertIn('st.subheader("いつでも会う")', SOURCE)
+        self.assertIn('st.expander("💞 いつでも会う")', SOURCE)
         self.assertIn("st.session_state.scene_state", SOURCE)
         self.assertIn("build_action_scene_state", SOURCE)
         self.assertIn("build_free_talk_scene_state", SOURCE)
@@ -331,6 +350,46 @@ class SceneStateTests(unittest.TestCase):
             SOURCE,
         )
         self.assertNotIn("とのチャットルーム", SOURCE)
+
+    def test_daily_stage_combines_hud_location_and_player_monologue(self):
+        build_stage = namespace["build_daily_stage_html"]
+
+        stage_html = build_stage(
+            image_data_uri="data:image/png;base64,AAAA",
+            orientation="portrait",
+            date_label="2026年08月20日",
+            weekday="木曜日",
+            time_slot="放課後",
+            weather="晴れ",
+            location_name="自宅",
+            intro="放課後になった。今日はどこへ行こう？",
+        )
+
+        self.assertIn("daily-scene-stage--portrait", stage_html)
+        self.assertIn("2026年08月20日", stage_html)
+        self.assertIn("放課後", stage_html)
+        self.assertIn("自宅", stage_html)
+        self.assertIn("主人公", stage_html)
+        self.assertIn("今日はどこへ行こう？", stage_html)
+
+    def test_daily_stage_escapes_dynamic_text(self):
+        build_stage = namespace["build_daily_stage_html"]
+
+        stage_html = build_stage(
+            image_data_uri="data:image/png;base64,AAAA",
+            orientation="unknown",
+            date_label="<script>alert(1)</script>",
+            weekday="木曜日",
+            time_slot="放課後",
+            weather="晴れ",
+            location_name='自宅" onload="alert(2)',
+            intro="<b>安全な独白</b>",
+        )
+
+        self.assertIn("daily-scene-stage--landscape", stage_html)
+        self.assertNotIn("<script>", stage_html)
+        self.assertNotIn("<b>安全な独白</b>", stage_html)
+        self.assertIn("&lt;b&gt;安全な独白&lt;/b&gt;", stage_html)
 
 
 if __name__ == "__main__":

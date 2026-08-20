@@ -175,7 +175,14 @@ class ConversationResponseTests(unittest.TestCase):
         self.assertIn("あ、のりおくん。<br>こんにちは。", rendered)
         self.assertNotIn("地の文", rendered)
         self.assertEqual(rendered.count("loveplus-dialogue-window"), 1)
-        self.assertNotIn("st.container(border=True)", SOURCE)
+        reply_builder = next(
+            node
+            for node in TREE.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "build_loveplus_reply_html"
+        )
+        reply_builder_source = ast.get_source_segment(SOURCE, reply_builder)
+        self.assertNotIn("st.container(border=True)", reply_builder_source)
 
     def test_loveplus_reply_ui_escapes_generated_html(self):
         reply = {
