@@ -24,6 +24,17 @@ class UiEntrypointTests(unittest.TestCase):
             source.index('runpy.run_module("game_app", run_name="__main__")'),
         )
 
+    def test_entrypoint_hides_streamlit_chrome(self):
+        source = self.read("app.py")
+        config = self.read(".streamlit/config.toml")
+
+        self.assertIn('page_title="ラブプラスAI"', source)
+        self.assertIn('[data-testid="stHeader"]', source)
+        self.assertIn('[data-testid="stToolbar"]', source)
+        self.assertIn('[data-testid="stStatusWidget"]', source)
+        self.assertIn("padding-top: 0 !important", source)
+        self.assertIn('toolbarMode = "minimal"', config)
+
     def test_hook_targets_only_daily_home_title(self):
         source = self.read("every_home_hook.py")
 
