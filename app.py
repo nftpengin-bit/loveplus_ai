@@ -88,6 +88,11 @@ LOCATIONS = {
         "background_id": "meeting_spot",
     },
 }
+BACKGROUND_ASSETS = {
+    "home_room": {
+        "day": "backgrounds/home/bg_protagonist_room_day.png",
+    },
+}
 LEGACY_LOCATION_IDS = {
     "自宅": "home_room",
     "テニスコート": "school_tennis_court",
@@ -281,6 +286,38 @@ def get_location(location_id: str | None) -> dict:
     """登録済み場所の情報を安全に取得する。"""
     resolved_id = resolve_location_id(location_id)
     return LOCATIONS[resolved_id]
+
+
+def get_background_variant(scene_state: dict | None) -> str:
+    """天気と時間帯から背景画像の候補を決める。"""
+    if not isinstance(scene_state, dict):
+        return "day"
+
+    weather = str(scene_state.get("weather", ""))
+    time_slot = str(scene_state.get("time_slot", ""))
+    if "雨" in weather:
+        return "rain"
+    if "夜" in time_slot:
+        return "night"
+    if "夕方" in time_slot:
+        return "sunset"
+    return "day"
+
+
+def get_scene_background_asset(scene_state: dict | None) -> str:
+    """現在地に対応する背景を返し、未用意の差分は昼画像へ戻す。"""
+    if not isinstance(scene_state, dict):
+        return ""
+
+    location = get_location(scene_state.get("location_id"))
+    background_id = location.get("background_id", "")
+    variants = BACKGROUND_ASSETS.get(background_id, {})
+    requested_variant = get_background_variant(scene_state)
+    return str(
+        variants.get(requested_variant)
+        or variants.get("day")
+        or ""
+    )
 
 
 def create_scene_state(
@@ -1458,6 +1495,10 @@ st.markdown(
         line-height: 1.75;
     }
 
+    div[data-testid="stImage"] img {
+        border-radius: 0.9rem;
+    }
+
     .scene-intro {
         margin: 0.35rem 0 1.15rem;
         color: #6b7280;
@@ -1606,6 +1647,19 @@ def return_to_daily() -> None:
     st.rerun()
 
 
+def render_scene_background(scene_state: dict) -> None:
+    """横長の場面背景を、比率を保ったまま画面幅へ合わせて表示する。"""
+    relative_asset_path = get_scene_background_asset(scene_state)
+    if not relative_asset_path:
+        return
+
+    asset_path = Path(__file__).resolve().parent / relative_asset_path
+    if not asset_path.is_file():
+        return
+
+    st.image(str(asset_path), use_container_width=True)
+
+
 def render_daily_screen() -> None:
     """場所を選び、遭遇シーンへ進むゲームの入口を表示する。"""
     daily_scene_state = st.session_state.scene_state
@@ -1628,6 +1682,7 @@ def render_daily_screen() -> None:
     date_label = parsed_date.strftime("%Y年%m月%d日")
 
     st.title("今日の行動")
+    render_scene_background(daily_scene_state)
     st.markdown(
         '<div class="daily-overview">'
         f"<strong>{html_text(date_label)}・"
