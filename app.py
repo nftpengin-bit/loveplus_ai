@@ -22,12 +22,84 @@ CHARACTERS = ("愛花", "凛子", "寧々")
 SCREEN_DAILY = "daily"
 SCREEN_SCENE = "scene"
 DEFAULT_GAME_TIME_SLOT = "放課後"
+DEFAULT_WEATHER = "晴れ"
+DEFAULT_LOCATION_ID = "home_room"
+SCENE_TYPE_DAILY = "daily"
+SCENE_TYPE_ENCOUNTER = "encounter"
+SCENE_TYPE_FREE_TALK = "free_talk"
+SCENE_TYPE_MOVE = "move"
+SCENE_TYPE_DATE = "date"
+SCENE_TYPE_EVENT = "event"
+VALID_SCENE_TYPES = {
+    SCENE_TYPE_DAILY,
+    SCENE_TYPE_ENCOUNTER,
+    SCENE_TYPE_FREE_TALK,
+    SCENE_TYPE_MOVE,
+    SCENE_TYPE_DATE,
+    SCENE_TYPE_EVENT,
+}
+SCENE_TYPE_LABELS = {
+    SCENE_TYPE_DAILY: "日常行動",
+    SCENE_TYPE_ENCOUNTER: "日常行動中の遭遇",
+    SCENE_TYPE_FREE_TALK: "恋人になった後の『いつでも会う』",
+    SCENE_TYPE_MOVE: "場所移動",
+    SCENE_TYPE_DATE: "デート",
+    SCENE_TYPE_EVENT: "特別イベント",
+}
+WEEKDAY_LABELS = (
+    "月曜日",
+    "火曜日",
+    "水曜日",
+    "木曜日",
+    "金曜日",
+    "土曜日",
+    "日曜日",
+)
+LOCATIONS = {
+    "home_room": {
+        "name": "自宅",
+        "detail": "主人公の部屋",
+        "category": "home",
+        "background_id": "home_room",
+    },
+    "school_tennis_court": {
+        "name": "テニスコート",
+        "detail": "学校のテニスコート",
+        "category": "school",
+        "background_id": "school_tennis_court",
+    },
+    "school_library": {
+        "name": "図書室",
+        "detail": "学校の図書室",
+        "category": "school",
+        "background_id": "school_library",
+    },
+    "family_restaurant": {
+        "name": "デキシーズ",
+        "detail": "アルバイト先のファミレス",
+        "category": "town",
+        "background_id": "family_restaurant",
+    },
+    "meeting_spot": {
+        "name": "いつもの待ち合わせ場所",
+        "detail": "恋人と会うための待ち合わせ場所",
+        "category": "town",
+        "background_id": "meeting_spot",
+    },
+}
+LEGACY_LOCATION_IDS = {
+    "自宅": "home_room",
+    "テニスコート": "school_tennis_court",
+    "図書室": "school_library",
+    "デキシーズ": "family_restaurant",
+    "いつもの待ち合わせ場所": "meeting_spot",
+}
 SCENE_ACTIONS = {
     "tennis_club": {
         "icon": "🎾",
         "title": "テニス部へ行く",
         "description": "テニスコートへ行き、部活の様子を見る。",
-        "location": "テニスコート",
+        "location_id": "school_tennis_court",
         "time_slot": "放課後",
         "character": "愛花",
         "intro": "放課後のテニスコートへ向かうと、練習を終えた愛花の姿が見えた。",
@@ -36,7 +108,7 @@ SCENE_ACTIONS = {
         "icon": "📚",
         "title": "図書室へ行く",
         "description": "図書委員の仕事を手伝いに行く。",
-        "location": "図書室",
+        "location_id": "school_library",
         "time_slot": "放課後",
         "character": "凛子",
         "intro": "静かな図書室へ入ると、凛子がカウンターで返却本を整理していた。",
@@ -45,7 +117,7 @@ SCENE_ACTIONS = {
         "icon": "🍽️",
         "title": "バイトへ行く",
         "description": "ファミレスの夕方のシフトに入る。",
-        "location": "デキシーズ",
+        "location_id": "family_restaurant",
         "time_slot": "夕方",
         "character": "寧々",
         "intro": "バイト先のデキシーズへ着くと、寧々がカウンターでメモを確認していた。",
@@ -154,65 +226,216 @@ CONVERSATION_RESPONSE_SCHEMA = {
 }
 
 
-def build_scene_context(
-    action_id: str,
+def get_weekday_label(game_date: str) -> str:
+    """ISO形式の日付を、ゲーム表示用の日本語曜日へ変換する。"""
+    parsed_date = datetime.date.fromisoformat(str(game_date))
+    return WEEKDAY_LABELS[parsed_date.weekday()]
+
+
+def resolve_location_id(
+    requested_location_id: str | None,
+    current_location_id: str = DEFAULT_LOCATION_ID,
+) -> str:
+    """未登録の場所は採用せず、現在地か初期地点を維持する。"""
+    if requested_location_id in LOCATIONS:
+        return str(requested_location_id)
+    if current_location_id in LOCATIONS:
+        return str(current_location_id)
+    return DEFAULT_LOCATION_ID
+
+
+def get_location(location_id: str | None) -> dict:
+    """登録済み場所の情報を安全に取得する。"""
+    resolved_id = resolve_location_id(location_id)
+    return LOCATIONS[resolved_id]
+
+
+def create_scene_state(
+    *,
+    location_id: str,
     game_date: str,
-    time_slot: str | None = None,
+    time_slot: str,
+    weather: str,
+    scene_type: str,
+    character: str | None,
+    previous_state: dict | None = None,
+    action_id: str = "",
+    intro: str = "",
 ) -> dict:
-    """日常行動から、会話画面で使う固定の場面情報を作る。"""
+    """登録済み場所だけを使って、正規形の場面状態を作る。"""
+    if scene_type not in VALID_SCENE_TYPES:
+        raise ValueError(f"unknown scene type: {scene_type}")
+    if character is not None and character not in CHARACTERS:
+        raise ValueError(f"unknown character: {character}")
+
+    has_previous_state = isinstance(previous_state, dict)
+    previous_location_id = resolve_location_id(
+        previous_state.get("location_id") if has_previous_state else None
+    )
+    resolved_location_id = resolve_location_id(
+        location_id,
+        previous_location_id,
+    )
+    if not has_previous_state:
+        previous_location_id = resolved_location_id
+
+    normalized_date = datetime.date.fromisoformat(str(game_date)).isoformat()
+    return {
+        "location_id": resolved_location_id,
+        "previous_location_id": previous_location_id,
+        "game_date": normalized_date,
+        "weekday": get_weekday_label(normalized_date),
+        "time_slot": str(time_slot or DEFAULT_GAME_TIME_SLOT),
+        "weather": str(weather or DEFAULT_WEATHER),
+        "scene_type": scene_type,
+        "scene_changed": resolved_location_id != previous_location_id,
+        "character": character,
+        "action_id": str(action_id),
+        "intro": str(intro),
+    }
+
+
+def build_daily_scene_state(
+    previous_state: dict | None = None,
+    game_date: str | None = None,
+    time_slot: str = DEFAULT_GAME_TIME_SLOT,
+    weather: str = DEFAULT_WEATHER,
+) -> dict:
+    """日常行動画面で使う自宅の場面状態を作る。"""
+    resolved_date = game_date or datetime.datetime.now(JST).date().isoformat()
+    resolved_time_slot = str(time_slot or DEFAULT_GAME_TIME_SLOT)
+    return create_scene_state(
+        location_id=DEFAULT_LOCATION_ID,
+        game_date=resolved_date,
+        time_slot=resolved_time_slot,
+        weather=weather,
+        scene_type=SCENE_TYPE_DAILY,
+        character=None,
+        previous_state=previous_state,
+        action_id="daily",
+        intro=f"{resolved_time_slot}になった。今日はどこへ行こう？",
+    )
+
+
+def build_action_scene_state(
+    action_id: str,
+    current_state: dict,
+    game_date: str | None = None,
+    time_slot: str | None = None,
+    weather: str | None = None,
+) -> dict:
+    """日常行動から、場所別の遭遇場面を作る。"""
     if action_id not in SCENE_ACTIONS:
         raise ValueError(f"unknown scene action: {action_id}")
 
     action = SCENE_ACTIONS[action_id]
-    return {
-        "scene_kind": "encounter",
-        "action_id": action_id,
-        "game_date": str(game_date),
-        "time_slot": str(time_slot or action["time_slot"]),
-        "location": action["location"],
-        "character": action["character"],
-        "intro": action["intro"],
-    }
+    return create_scene_state(
+        location_id=action["location_id"],
+        game_date=game_date or current_state["game_date"],
+        time_slot=time_slot or action["time_slot"],
+        weather=weather or current_state.get("weather", DEFAULT_WEATHER),
+        scene_type=SCENE_TYPE_ENCOUNTER,
+        character=action["character"],
+        previous_state=current_state,
+        action_id=action_id,
+        intro=action["intro"],
+    )
 
 
-def build_free_talk_context(
+def build_free_talk_scene_state(
     character: str,
-    game_date: str,
-    time_slot: str = DEFAULT_GAME_TIME_SLOT,
+    current_state: dict,
+    game_date: str | None = None,
+    time_slot: str | None = None,
+    weather: str | None = None,
 ) -> dict:
     """恋人になったカノジョへ、いつでも会いに行く場面を作る。"""
     if character not in CHARACTERS:
         raise ValueError(f"unknown character: {character}")
 
-    return {
-        "scene_kind": "free_talk",
-        "action_id": "free_talk",
-        "game_date": str(game_date),
-        "time_slot": str(time_slot),
-        "location": "いつもの待ち合わせ場所",
-        "character": character,
-        "intro": f"{character}に会いに来た。今日は、どんな話をしよう。",
-    }
+    return create_scene_state(
+        location_id="meeting_spot",
+        game_date=game_date or current_state["game_date"],
+        time_slot=time_slot or current_state["time_slot"],
+        weather=weather or current_state.get("weather", DEFAULT_WEATHER),
+        scene_type=SCENE_TYPE_FREE_TALK,
+        character=character,
+        previous_state=current_state,
+        action_id="free_talk",
+        intro=f"{character}に会いに来た。今日は、どんな話をしよう。",
+    )
 
 
-def format_scene_instruction(scene_context: dict | None) -> str:
-    """現在の場所と場面を、会話AIへ渡す追加指示に変換する。"""
+def migrate_legacy_scene_context(scene_context: dict | None) -> dict | None:
+    """旧版の場面情報を、現行のscene_stateへ引き継ぐ。"""
     if not isinstance(scene_context, dict):
+        return None
+
+    location_id = LEGACY_LOCATION_IDS.get(
+        str(scene_context.get("location", "")),
+        DEFAULT_LOCATION_ID,
+    )
+    legacy_kind = scene_context.get("scene_kind", SCENE_TYPE_ENCOUNTER)
+    scene_type = (
+        legacy_kind
+        if legacy_kind in VALID_SCENE_TYPES
+        else SCENE_TYPE_ENCOUNTER
+    )
+    game_date = scene_context.get("game_date")
+    try:
+        normalized_date = datetime.date.fromisoformat(str(game_date)).isoformat()
+    except ValueError:
+        normalized_date = datetime.datetime.now(JST).date().isoformat()
+
+    legacy_character = scene_context.get("character")
+    if legacy_character not in CHARACTERS:
+        legacy_character = None
+
+    return create_scene_state(
+        location_id=location_id,
+        game_date=normalized_date,
+        time_slot=scene_context.get("time_slot", DEFAULT_GAME_TIME_SLOT),
+        weather=DEFAULT_WEATHER,
+        scene_type=scene_type,
+        character=legacy_character,
+        previous_state={"location_id": DEFAULT_LOCATION_ID},
+        action_id=scene_context.get("action_id", ""),
+        intro=scene_context.get("intro", ""),
+    )
+
+
+def format_scene_instruction(scene_state: dict | None) -> str:
+    """正式な場面状態を、会話AIへ渡す追加指示に変換する。"""
+    if not isinstance(scene_state, dict):
         return "【現在の場面】\n場面情報は未指定。ユーザーが示した場所と状況を優先する。"
 
-    scene_kind = scene_context.get("scene_kind", "encounter")
-    scene_label = (
-        "恋人になった後の『いつでも会う』"
-        if scene_kind == "free_talk"
-        else "日常行動中の遭遇"
+    location_id = resolve_location_id(scene_state.get("location_id"))
+    previous_location_id = resolve_location_id(
+        scene_state.get("previous_location_id"),
+        location_id,
     )
+    location = get_location(location_id)
+    previous_location = get_location(previous_location_id)
+    scene_type = scene_state.get("scene_type", SCENE_TYPE_ENCOUNTER)
+    scene_label = SCENE_TYPE_LABELS.get(
+        scene_type,
+        SCENE_TYPE_LABELS[SCENE_TYPE_ENCOUNTER],
+    )
+    changed_label = "あり" if scene_state.get("scene_changed") else "なし"
+    registered_location_ids = ", ".join(LOCATIONS)
+
     return f"""【現在の場面】
 場面種別: {scene_label}
-ゲーム内日付: {scene_context.get('game_date', '')}
-時間帯: {scene_context.get('time_slot', '')}
-場所: {scene_context.get('location', '')}
-導入: {scene_context.get('intro', '')}
-ユーザーが明示しない限り、この場所と時間帯を維持する。"""
+ゲーム内日付: {scene_state.get('game_date', '')}（{scene_state.get('weekday', '')}）
+時間帯: {scene_state.get('time_slot', '')}
+天気: {scene_state.get('weather', '')}
+現在地ID: {location_id}
+現在地: {location['name']}（{location['detail']}）
+直前の場所: {previous_location['name']}
+場面開始時の場所変更: {changed_label}
+導入: {scene_state.get('intro', '')}
+登録済み場所ID: {registered_location_ids}
+場所の変更はアプリ側で管理する。登録されていない場所を作らず、ユーザーが移動を希望しても返答内では現在地を維持する。"""
 
 
 def require_secret(name: str) -> str:
@@ -463,8 +686,14 @@ if "recent_memory" not in st.session_state:
 if "screen_mode" not in st.session_state:
     st.session_state.screen_mode = SCREEN_DAILY
 
-if "scene_context" not in st.session_state:
-    st.session_state.scene_context = None
+if "scene_state" not in st.session_state:
+    migrated_scene_state = migrate_legacy_scene_context(
+        st.session_state.get("scene_context")
+    )
+    st.session_state.scene_state = (
+        migrated_scene_state or build_daily_scene_state()
+    )
+st.session_state.pop("scene_context", None)
 
 
 # =========================================================
@@ -643,7 +872,7 @@ def build_character_prompt(
 def build_system_instruction(
     character: str,
     memory: str,
-    scene_context: dict | None = None,
+    scene_state: dict | None = None,
 ) -> str:
     state = st.session_state.game_state[character]
     love_label, love_number = get_love_level(state["love_points"])
@@ -673,7 +902,7 @@ def build_system_instruction(
         if state["sweet_mode"]
         else love_label
     )
-    scene_instruction = format_scene_instruction(scene_context)
+    scene_instruction = format_scene_instruction(scene_state)
 
     return f"""
 【キャラクター設定】
@@ -1075,14 +1304,14 @@ def render_assistant_message(message: dict, speaker: str) -> None:
     )
 
 
-def enter_scene(scene_context: dict) -> None:
+def enter_scene(next_scene_state: dict) -> None:
     """日常行動画面から会話シーンへ移動する。"""
-    character_name = scene_context.get("character")
+    character_name = next_scene_state.get("character")
     if character_name not in CHARACTERS:
         st.error("この場面の相手を特定できませんでした。")
         return
 
-    st.session_state.scene_context = scene_context.copy()
+    st.session_state.scene_state = next_scene_state.copy()
     st.session_state.screen_mode = SCREEN_SCENE
     st.session_state.chat_histories[character_name] = []
     st.session_state.pop("active_character", None)
@@ -1091,28 +1320,53 @@ def enter_scene(scene_context: dict) -> None:
 
 def return_to_daily() -> None:
     """現在の会話シーンを閉じ、日常行動画面へ戻る。"""
+    current_scene_state = st.session_state.scene_state
+    st.session_state.scene_state = build_daily_scene_state(
+        previous_state=current_scene_state,
+        game_date=current_scene_state.get("game_date"),
+        time_slot=current_scene_state.get(
+            "time_slot", DEFAULT_GAME_TIME_SLOT
+        ),
+        weather=current_scene_state.get("weather", DEFAULT_WEATHER),
+    )
     st.session_state.screen_mode = SCREEN_DAILY
-    st.session_state.scene_context = None
     st.session_state.pop("active_character", None)
     st.rerun()
 
 
 def render_daily_screen() -> None:
     """場所を選び、遭遇シーンへ進むゲームの入口を表示する。"""
-    now = datetime.datetime.now(JST)
-    game_date = now.date().isoformat()
-    date_label = now.strftime("%Y年%m月%d日")
+    daily_scene_state = st.session_state.scene_state
+    if not isinstance(daily_scene_state, dict):
+        daily_scene_state = build_daily_scene_state()
+        st.session_state.scene_state = daily_scene_state
+    elif daily_scene_state.get("scene_type") != SCENE_TYPE_DAILY:
+        daily_scene_state = build_daily_scene_state(
+            previous_state=daily_scene_state,
+            game_date=daily_scene_state.get("game_date"),
+            time_slot=daily_scene_state.get(
+                "time_slot", DEFAULT_GAME_TIME_SLOT
+            ),
+            weather=daily_scene_state.get("weather", DEFAULT_WEATHER),
+        )
+        st.session_state.scene_state = daily_scene_state
+
+    current_location = get_location(daily_scene_state["location_id"])
+    parsed_date = datetime.date.fromisoformat(daily_scene_state["game_date"])
+    date_label = parsed_date.strftime("%Y年%m月%d日")
 
     st.title("今日の行動")
     st.markdown(
         '<div class="daily-overview">'
-        f"<strong>{html_text(date_label)}</strong><br>"
-        f"🕒 時間帯: {html_text(DEFAULT_GAME_TIME_SLOT)}　"
-        "🏠 現在地: 自宅"
+        f"<strong>{html_text(date_label)}・"
+        f"{html_text(daily_scene_state['weekday'])}</strong><br>"
+        f"🕒 時間帯: {html_text(daily_scene_state['time_slot'])}　"
+        f"🌦️ 天気: {html_text(daily_scene_state['weather'])}<br>"
+        f"🏠 現在地: {html_text(current_location['name'])}"
         "</div>",
         unsafe_allow_html=True,
     )
-    st.write("放課後になった。今日はどこへ行こう？")
+    st.write(daily_scene_state["intro"])
 
     st.subheader("行き先を選ぶ")
     action_items = list(SCENE_ACTIONS.items())
@@ -1124,7 +1378,12 @@ def render_daily_screen() -> None:
             key=f"daily_action_{action_id}",
             use_container_width=True,
         ):
-            enter_scene(build_scene_context(action_id, game_date))
+            enter_scene(
+                build_action_scene_state(
+                    action_id,
+                    daily_scene_state,
+                )
+            )
         if index < len(action_items) - 1:
             st.divider()
 
@@ -1145,7 +1404,12 @@ def render_daily_screen() -> None:
                 key=f"free_talk_{name}",
                 use_container_width=True,
             ):
-                enter_scene(build_free_talk_context(name, game_date))
+                enter_scene(
+                    build_free_talk_scene_state(
+                        name,
+                        daily_scene_state,
+                    )
+                )
     else:
         st.caption("恋人になると『いつでも会う』が解禁されます。")
 
@@ -1161,10 +1425,13 @@ def render_daily_screen() -> None:
 
 st.sidebar.title("メニュー")
 if st.session_state.screen_mode == SCREEN_SCENE:
-    scene_sidebar_context = st.session_state.scene_context or {}
+    sidebar_scene_state = st.session_state.scene_state
+    sidebar_location = get_location(
+        sidebar_scene_state.get("location_id")
+    )
     st.sidebar.caption(
-        f"{scene_sidebar_context.get('location', '会話中')}・"
-        f"{scene_sidebar_context.get('time_slot', '')}"
+        f"{sidebar_location['name']}・"
+        f"{sidebar_scene_state.get('time_slot', '')}"
     )
     if st.sidebar.button("日常へ戻る", use_container_width=True):
         return_to_daily()
@@ -1177,22 +1444,24 @@ if st.sidebar.button("ログアウト", use_container_width=True):
         "_game_state_schema_version",
         "_spreadsheet",
         "active_character",
+        "scene_state",
         "scene_context",
         "screen_mode",
     ):
         st.session_state.pop(key, None)
     st.rerun()
 
-scene_context = st.session_state.scene_context
+scene_state = st.session_state.scene_state
 if (
     st.session_state.screen_mode != SCREEN_SCENE
-    or not isinstance(scene_context, dict)
-    or scene_context.get("character") not in CHARACTERS
+    or not isinstance(scene_state, dict)
+    or scene_state.get("scene_type") == SCENE_TYPE_DAILY
+    or scene_state.get("character") not in CHARACTERS
 ):
     render_daily_screen()
     st.stop()
 
-character = scene_context["character"]
+character = scene_state["character"]
 if st.session_state.get("active_character") != character:
     st.session_state.active_character = character
     try:
@@ -1217,14 +1486,17 @@ mode_label, _ = get_mode(
 if st.button("← 日常へ戻る", key="back_to_daily_main"):
     return_to_daily()
 
-st.title(scene_context["location"])
+scene_location = get_location(scene_state["location_id"])
+st.title(scene_location["name"])
 st.caption(
-    f"{scene_context.get('game_date', '')} ｜ "
-    f"{scene_context.get('time_slot', '')} ｜ {character}"
+    f"{scene_state.get('game_date', '')}・"
+    f"{scene_state.get('weekday', '')} ｜ "
+    f"{scene_state.get('time_slot', '')} ｜ "
+    f"{scene_state.get('weather', '')} ｜ {character}"
 )
 st.markdown(
     '<div class="scene-intro">'
-    f"{html_text(scene_context.get('intro', ''))}"
+    f"{html_text(scene_state.get('intro', ''))}"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -1258,7 +1530,7 @@ for message in history:
 
 input_label = (
     f"{character}と自由に話す"
-    if scene_context.get("scene_kind") == "free_talk"
+    if scene_state.get("scene_type") == SCENE_TYPE_FREE_TALK
     else f"{character}に話しかける"
 )
 if user_msg := st.chat_input(
@@ -1280,7 +1552,7 @@ if user_msg := st.chat_input(
     system_instruction = build_system_instruction(
         character,
         st.session_state.recent_memory,
-        scene_context,
+        scene_state,
     )
     contents = build_contents(history)
 
