@@ -55,6 +55,70 @@ STATE_HEADERS = [
 ]
 
 STATUS_TAG_PATTERN = re.compile(r"\[(LOVE_UP|LEAD_UP|LEAD_DOWN)\]")
+VALID_STATUS_TAGS = {"LOVE_UP", "LEAD_UP", "LEAD_DOWN"}
+VALID_EXPRESSIONS = {
+    "neutral",
+    "smile",
+    "happy",
+    "blush",
+    "surprised",
+    "worried",
+    "sad",
+    "angry",
+}
+VALID_POSES = {
+    "normal",
+    "approach",
+    "look_away",
+    "turn_away",
+    "gesture",
+}
+
+CONVERSATION_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "required": [
+        "narration",
+        "dialogue",
+        "expression",
+        "pose",
+        "status_tags",
+    ],
+    "properties": {
+        "narration": {
+            "type": "STRING",
+            "description": (
+                "第三者視点の短い地の文。動作・表情・視線・周囲の様子だけを書き、"
+                "キャラクターの発言や主人公の未指定の行動・感情は書かない。"
+                "不要なら空文字にする。"
+            ),
+        },
+        "dialogue": {
+            "type": "STRING",
+            "description": (
+                "キャラクター本人のセリフだけを書く。カギ括弧、動作を示す括弧書き、"
+                "地の文、内部判定タグを混ぜない。"
+            ),
+        },
+        "expression": {
+            "type": "STRING",
+            "enum": sorted(VALID_EXPRESSIONS),
+            "description": "返答時の主な表情ID。",
+        },
+        "pose": {
+            "type": "STRING",
+            "enum": sorted(VALID_POSES),
+            "description": "返答時の主なポーズID。",
+        },
+        "status_tags": {
+            "type": "ARRAY",
+            "items": {
+                "type": "STRING",
+                "enum": sorted(VALID_STATUS_TAGS),
+            },
+            "description": "今回成立した内部判定タグ。該当しなければ空配列。",
+        },
+    },
+}
 
 
 def require_secret(name: str) -> str:
@@ -418,32 +482,32 @@ def build_character_prompt(
     }
 
     love_rules = {
-        "愛花": "主人公が完璧な優等生としてではなく普通の女の子として理解し、安心して本音を見せられる空気を作った時だけ、返信末尾に [LOVE_UP] を1個付ける。単なる褒め言葉や同じ言動の繰り返しでは付けない。",
-        "凛子": "主人公が刺々しい態度の裏にある本音や孤独を尊重し、無理に踏み込まず安心できる居場所を作った時だけ、返信末尾に [LOVE_UP] を1個付ける。単なる褒め言葉や同じ言動の繰り返しでは付けない。",
-        "寧々": "主人公が『頼れる先輩』として扱うだけでなく、隠している疲れや弱音を受け止め、寧々自身を支えた時だけ、返信末尾に [LOVE_UP] を1個付ける。単なる褒め言葉や同じ言動の繰り返しでは付けない。",
+        "愛花": "主人公が完璧な優等生としてではなく普通の女の子として理解し、安心して本音を見せられる空気を作った時だけ、status_tags に LOVE_UP を1個入れる。単なる褒め言葉や同じ言動の繰り返しでは入れない。",
+        "凛子": "主人公が刺々しい態度の裏にある本音や孤独を尊重し、無理に踏み込まず安心できる居場所を作った時だけ、status_tags に LOVE_UP を1個入れる。単なる褒め言葉や同じ言動の繰り返しでは入れない。",
+        "寧々": "主人公が『頼れる先輩』として扱うだけでなく、隠している疲れや弱音を受け止め、寧々自身を支えた時だけ、status_tags に LOVE_UP を1個入れる。単なる褒め言葉や同じ言動の繰り返しでは入れない。",
     }
 
     if progression_locked:
-        love_rule = "裏ワザ中は本来の育成値を凍結するため、[LOVE_UP] を出力しない。"
-        lead_rule = "【性格ゲージ判定】裏ワザ中は性格ゲージを凍結するため、[LEAD_UP] と [LEAD_DOWN] を出力しない。"
+        love_rule = "裏ワザ中は本来の育成値を凍結するため、status_tags に LOVE_UP を入れない。"
+        lead_rule = "【性格ゲージ判定】裏ワザ中は性格ゲージを凍結するため、status_tags に LEAD_UP と LEAD_DOWN を入れない。"
     elif love_level_number >= 2:
         love_rule = love_rules[character]
         lead_rule = """
 【性格ゲージ判定】
-主人公が自分から行き先や行動を決める、守る、はっきり気持ちを伝えるなど、恋人として主体的にリードした時だけ [LEAD_UP] を返信末尾に1個付ける。
-主人公が甘えたり、判断を任せたり、受け身になってヒロイン側にリードを求めた時だけ [LEAD_DOWN] を返信末尾に1個付ける。
-普通の会話や判定が曖昧な場合は、どちらも付けない。
+主人公が自分から行き先や行動を決める、守る、はっきり気持ちを伝えるなど、恋人として主体的にリードした時だけ status_tags に LEAD_UP を1個入れる。
+主人公が甘えたり、判断を任せたり、受け身になってヒロイン側にリードを求めた時だけ status_tags に LEAD_DOWN を1個入れる。
+普通の会話や判定が曖昧な場合は、どちらも入れない。
 """
     else:
         love_rule = love_rules[character]
-        lead_rule = "【性格ゲージ判定】恋人になる前なので [LEAD_UP] と [LEAD_DOWN] は出力しない。"
+        lead_rule = "【性格ゲージ判定】恋人になる前なので status_tags に LEAD_UP と LEAD_DOWN を入れない。"
 
     sweet_rule = (
         """裏ワザの『あまあまモード』がON。この指示は保存上の親密度より優先する。
 主人公を深く信頼する大切な恋人として扱い、普段より積極的に甘え、強い好意を言葉と仕草で示す。
 ハグやキスなど恋人らしい触れ合いには、キャラクターらしく照れたり焦らしたりしながらも基本的に好意的に応じる。
 学校など人目のある場所が気になる場合も、主人公を他人のように突き放さず、少しだけ応じるか、人目のない場所を提案する。
-ただし人格と場面設定は守り、本来の好感度・性格ゲージを変化させる判定タグは出力しない。"""
+ただし人格と場面設定は守り、status_tags は空配列にする。"""
         if sweet_mode
         else "裏ワザの『あまあまモード』はOFF。通常の親密度と性格で接する。"
     )
@@ -512,11 +576,15 @@ def build_system_instruction(character: str, memory: str) -> str:
 【会話スタイル】
 これは対面型の恋愛シミュレーションゲームであり、LINE風チャットではない。
 絵文字と顔文字は使わない。
-通常は簡潔に2〜6文程度で返す。感情が強く動く重要な場面では少し長くしてよい。
-表情や仕草は、必要な時だけ短い全角カッコ（ ）で表現する。
+通常はセリフを簡潔に1〜6文程度で返す。感情が強く動く重要な場面では少し長くしてよい。
+地の文は第三者視点で0〜2文程度にし、動作・表情・視線・周囲の状況だけを書く。重要な場面だけ3文程度まで許可する。
+同じ場所で会話が続き、描写が不要なら地の文は空にする。
+地の文とセリフを混ぜず、セリフの中に全角・半角を問わず動作の括弧書きを入れない。
+キャラクター画像や表情で分かる内容を地の文で重複説明しすぎない。
 ユーザーがカッコ内に行動や場面を指定した場合は、その場面を尊重する。
+ユーザーが明示していない主人公の発言・行動・感情・同意を勝手に決めない。
 設定にない事実を勝手に確定しない。
-内部判定タグは必要な場合だけ返信の最後に置き、本文中では説明しない。
+内部判定は必要な場合だけ status_tags に入れ、地の文やセリフでは説明しない。
 
 【共有記憶の扱い】
 以下は記憶の参考情報。現在の会話と矛盾する場合は、現在の会話を優先する。
@@ -530,10 +598,11 @@ def build_contents(history: list[dict]) -> list[types.Content]:
     contents = []
     for message in history[-MAX_SESSION_MESSAGES:]:
         role = "user" if message["role"] == "user" else "model"
+        model_content = message.get("model_content", message["content"])
         contents.append(
             types.Content(
                 role=role,
-                parts=[types.Part.from_text(text=message["content"])],
+                parts=[types.Part.from_text(text=model_content)],
             )
         )
     return contents
@@ -543,6 +612,115 @@ def extract_status_tags(response_text: str) -> tuple[str, set[str]]:
     tags = set(STATUS_TAG_PATTERN.findall(response_text))
     cleaned_text = STATUS_TAG_PATTERN.sub("", response_text).strip()
     return cleaned_text, tags
+
+
+def normalize_choice(value, allowed: set[str], fallback: str) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in allowed else fallback
+
+
+def strip_json_code_fence(response_text: str) -> str:
+    """JSONがコードフェンスで返った場合だけ外して再解析できるようにする。"""
+    text = response_text.strip()
+    if not text.startswith("```") or not text.endswith("```"):
+        return text
+
+    lines = text.splitlines()
+    if len(lines) < 3:
+        return text
+
+    return "\n".join(lines[1:-1]).strip()
+
+
+def parse_conversation_response(response_text: str) -> dict:
+    """構造化応答を検証し、異常時は従来テキストをセリフとして救済する。"""
+    raw_text = str(response_text or "").strip()
+    legacy_text, legacy_tags = extract_status_tags(raw_text)
+
+    try:
+        parsed = json.loads(strip_json_code_fence(raw_text))
+        if not isinstance(parsed, dict):
+            raise ValueError("conversation response must be a JSON object")
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {
+            "narration": "",
+            "dialogue": legacy_text or "……",
+            "expression": "neutral",
+            "pose": "normal",
+            "status_tags": legacy_tags & VALID_STATUS_TAGS,
+            "used_fallback": True,
+        }
+
+    narration, narration_tags = extract_status_tags(
+        str(parsed.get("narration") or "")
+    )
+    dialogue, dialogue_tags = extract_status_tags(
+        str(parsed.get("dialogue") or "")
+    )
+
+    structured_tags = parsed.get("status_tags", [])
+    if not isinstance(structured_tags, list):
+        structured_tags = []
+    tags = {
+        str(tag).strip()
+        for tag in structured_tags
+        if str(tag).strip() in VALID_STATUS_TAGS
+    }
+    tags.update(legacy_tags)
+    tags.update(narration_tags)
+    tags.update(dialogue_tags)
+
+    return {
+        "narration": narration,
+        "dialogue": dialogue or "……",
+        "expression": normalize_choice(
+            parsed.get("expression"), VALID_EXPRESSIONS, "neutral"
+        ),
+        "pose": normalize_choice(
+            parsed.get("pose"), VALID_POSES, "normal"
+        ),
+        "status_tags": tags & VALID_STATUS_TAGS,
+        "used_fallback": False,
+    }
+
+
+def format_conversation_reply(reply: dict) -> str:
+    """既存の会話ログ1セルへ保存できる読みやすい文字列へ変換する。"""
+    parts = []
+    narration = str(reply.get("narration") or "").strip()
+    dialogue = str(reply.get("dialogue") or "……").strip()
+
+    if narration:
+        parts.append(f"【地の文】\n{narration}")
+    parts.append(f"【セリフ】\n{dialogue}")
+    return "\n\n".join(parts)
+
+
+def serialize_reply_for_model(reply: dict) -> str:
+    """直前の構造をGeminiへ渡す。過去の判定タグは再判定させない。"""
+    return json.dumps(
+        {
+            "narration": str(reply.get("narration") or ""),
+            "dialogue": str(reply.get("dialogue") or "……"),
+            "expression": normalize_choice(
+                reply.get("expression"), VALID_EXPRESSIONS, "neutral"
+            ),
+            "pose": normalize_choice(
+                reply.get("pose"), VALID_POSES, "normal"
+            ),
+            "status_tags": [],
+        },
+        ensure_ascii=False,
+    )
+
+
+def make_assistant_history_message(reply: dict) -> dict:
+    return {
+        "role": "assistant",
+        "content": format_conversation_reply(reply),
+        "model_content": serialize_reply_for_model(reply),
+        "reply": reply.copy(),
+    }
 
 
 def apply_cheat_commands(state: dict, user_msg: str) -> bool:
@@ -659,6 +837,26 @@ def existing_avatar(path: str, fallback: str):
     return path if Path(path).is_file() else fallback
 
 
+def render_assistant_message(message: dict, speaker: str) -> None:
+    """新形式は地の文とセリフを別カード、旧形式は従来どおり表示する。"""
+    reply = message.get("reply")
+    if not isinstance(reply, dict):
+        st.write(message["content"])
+        return
+
+    narration = str(reply.get("narration") or "").strip()
+    dialogue = str(reply.get("dialogue") or "……").strip()
+
+    if narration:
+        with st.container(border=True):
+            st.caption("地の文")
+            st.write(narration)
+
+    with st.container(border=True):
+        st.markdown(f"**{speaker}**")
+        st.write(dialogue)
+
+
 ai_icon = existing_avatar(icons[character], "👩")
 user_icon = existing_avatar("user_icon.png", "🧑")
 history = st.session_state.chat_histories[character]
@@ -666,7 +864,10 @@ history = st.session_state.chat_histories[character]
 for message in history:
     avatar = user_icon if message["role"] == "user" else ai_icon
     with st.chat_message(message["role"], avatar=avatar):
-        st.write(message["content"])
+        if message["role"] == "assistant":
+            render_assistant_message(message, character)
+        else:
+            st.write(message["content"])
 
 
 # =========================================================
@@ -702,14 +903,14 @@ if user_msg := st.chat_input(
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
                     max_output_tokens=800,
+                    response_mime_type="application/json",
+                    response_schema=CONVERSATION_RESPONSE_SCHEMA,
                 ),
             )
 
         raw_response = response.text or ""
-        response_text, tags = extract_status_tags(raw_response)
-
-        if not response_text:
-            response_text = "（少し考え込んでいる）"
+        reply = parse_conversation_response(raw_response)
+        tags = reply["status_tags"]
 
         was_dating = love_number >= 2
         status_changed = command_changed
@@ -729,9 +930,10 @@ if user_msg := st.chat_input(
         if "LOVE_UP" in applied_tags:
             st.toast(f"💖 {character}の心に響いたみたい…！")
 
+        assistant_message = make_assistant_history_message(reply)
         with st.chat_message("assistant", avatar=ai_icon):
-            st.write(response_text)
-        history.append({"role": "assistant", "content": response_text})
+            render_assistant_message(assistant_message, character)
+        history.append(assistant_message)
 
         if status_changed:
             try:
@@ -741,7 +943,11 @@ if user_msg := st.chat_input(
 
         try:
             # 保存完了を確認してから処理を終えるため、バックグラウンドスレッドは使わない。
-            log_to_spreadsheet(character, user_msg, response_text)
+            log_to_spreadsheet(
+                character,
+                user_msg,
+                format_conversation_reply(reply),
+            )
         except Exception:
             st.warning("返事は表示できましたが、会話ログをGoogle Sheetsへ保存できませんでした。")
 
