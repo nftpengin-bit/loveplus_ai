@@ -19,6 +19,38 @@ from gspread.exceptions import WorksheetNotFound
 
 JST = datetime.timezone(datetime.timedelta(hours=9), "JST")
 CHARACTERS = ("愛花", "凛子", "寧々")
+SCREEN_DAILY = "daily"
+SCREEN_SCENE = "scene"
+DEFAULT_GAME_TIME_SLOT = "放課後"
+SCENE_ACTIONS = {
+    "tennis_club": {
+        "icon": "🎾",
+        "title": "テニス部へ行く",
+        "description": "テニスコートへ行き、部活の様子を見る。",
+        "location": "テニスコート",
+        "time_slot": "放課後",
+        "character": "愛花",
+        "intro": "放課後のテニスコートへ向かうと、練習を終えた愛花の姿が見えた。",
+    },
+    "library": {
+        "icon": "📚",
+        "title": "図書室へ行く",
+        "description": "図書委員の仕事を手伝いに行く。",
+        "location": "図書室",
+        "time_slot": "放課後",
+        "character": "凛子",
+        "intro": "静かな図書室へ入ると、凛子がカウンターで返却本を整理していた。",
+    },
+    "restaurant_shift": {
+        "icon": "🍽️",
+        "title": "バイトへ行く",
+        "description": "ファミレスの夕方のシフトに入る。",
+        "location": "デキシーズ",
+        "time_slot": "夕方",
+        "character": "寧々",
+        "intro": "バイト先のデキシーズへ着くと、寧々がカウンターでメモを確認していた。",
+    },
+}
 MODEL_NAME = st.secrets.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 SHEET_URL = st.secrets.get("SHEET_URL", "")
 STATE_SHEET_NAME = "game_state"
@@ -120,6 +152,67 @@ CONVERSATION_RESPONSE_SCHEMA = {
         },
     },
 }
+
+
+def build_scene_context(
+    action_id: str,
+    game_date: str,
+    time_slot: str | None = None,
+) -> dict:
+    """日常行動から、会話画面で使う固定の場面情報を作る。"""
+    if action_id not in SCENE_ACTIONS:
+        raise ValueError(f"unknown scene action: {action_id}")
+
+    action = SCENE_ACTIONS[action_id]
+    return {
+        "scene_kind": "encounter",
+        "action_id": action_id,
+        "game_date": str(game_date),
+        "time_slot": str(time_slot or action["time_slot"]),
+        "location": action["location"],
+        "character": action["character"],
+        "intro": action["intro"],
+    }
+
+
+def build_free_talk_context(
+    character: str,
+    game_date: str,
+    time_slot: str = DEFAULT_GAME_TIME_SLOT,
+) -> dict:
+    """恋人になったカノジョへ、いつでも会いに行く場面を作る。"""
+    if character not in CHARACTERS:
+        raise ValueError(f"unknown character: {character}")
+
+    return {
+        "scene_kind": "free_talk",
+        "action_id": "free_talk",
+        "game_date": str(game_date),
+        "time_slot": str(time_slot),
+        "location": "いつもの待ち合わせ場所",
+        "character": character,
+        "intro": f"{character}に会いに来た。今日は、どんな話をしよう。",
+    }
+
+
+def format_scene_instruction(scene_context: dict | None) -> str:
+    """現在の場所と場面を、会話AIへ渡す追加指示に変換する。"""
+    if not isinstance(scene_context, dict):
+        return "【現在の場面】\n場面情報は未指定。ユーザーが示した場所と状況を優先する。"
+
+    scene_kind = scene_context.get("scene_kind", "encounter")
+    scene_label = (
+        "恋人になった後の『いつでも会う』"
+        if scene_kind == "free_talk"
+        else "日常行動中の遭遇"
+    )
+    return f"""【現在の場面】
+場面種別: {scene_label}
+ゲーム内日付: {scene_context.get('game_date', '')}
+時間帯: {scene_context.get('time_slot', '')}
+場所: {scene_context.get('location', '')}
+導入: {scene_context.get('intro', '')}
+ユーザーが明示しない限り、この場所と時間帯を維持する。"""
 
 
 def require_secret(name: str) -> str:
@@ -367,6 +460,12 @@ if "chat_histories" not in st.session_state:
 if "recent_memory" not in st.session_state:
     st.session_state.recent_memory = ""
 
+if "screen_mode" not in st.session_state:
+    st.session_state.screen_mode = SCREEN_DAILY
+
+if "scene_context" not in st.session_state:
+    st.session_state.scene_context = None
+
 
 # =========================================================
 # 5. ゲーム状態の判定
@@ -378,6 +477,12 @@ def get_love_level(points: int) -> tuple[str, int]:
     if points < 7:
         return "Lv2: 恋人", 2
     return "Lv3: 深い恋人関係", 3
+
+
+def is_free_talk_unlocked(points: int) -> bool:
+    """保存上の親密度が恋人段階なら『いつでも会う』を解禁する。"""
+    _, love_level_number = get_love_level(points)
+    return love_level_number >= 2
 
 
 def get_effective_love_level(love_level_number: int, sweet_mode: bool) -> int:
@@ -535,7 +640,11 @@ def build_character_prompt(
 """
 
 
-def build_system_instruction(character: str, memory: str) -> str:
+def build_system_instruction(
+    character: str,
+    memory: str,
+    scene_context: dict | None = None,
+) -> str:
     state = st.session_state.game_state[character]
     love_label, love_number = get_love_level(state["love_points"])
     effective_love_number = get_effective_love_level(
@@ -564,10 +673,13 @@ def build_system_instruction(character: str, memory: str) -> str:
         if state["sweet_mode"]
         else love_label
     )
+    scene_instruction = format_scene_instruction(scene_context)
 
     return f"""
 【キャラクター設定】
 {character_prompt}
+
+{scene_instruction}
 
 【現在情報】
 現在の日本時間は {now.strftime('%Y年%m月%d日 %H時%M分')}。
@@ -786,47 +898,6 @@ def apply_progression_tags(
 # 6. 画面
 # =========================================================
 
-st.sidebar.title("ヒロイン選択")
-character = st.sidebar.radio("誰と話す？", CHARACTERS)
-st.sidebar.markdown("---")
-
-if st.sidebar.button("ログアウト"):
-    st.session_state.authenticated = False
-    st.session_state.pop("game_state", None)
-    st.session_state.pop("_game_state_schema_version", None)
-    st.session_state.pop("_spreadsheet", None)
-    st.rerun()
-
-if st.session_state.get("active_character") != character:
-    st.session_state.active_character = character
-    try:
-        with st.spinner("これまでの思い出を読み込み中..."):
-            st.session_state.recent_memory = load_recent_memory()
-    except Exception:
-        st.session_state.recent_memory = ""
-        st.warning("直近の会話履歴を読み込めませんでした。今回は現在の会話だけで続けます。")
-
-state = st.session_state.game_state[character]
-love_label, love_number = get_love_level(state["love_points"])
-effective_love_number = get_effective_love_level(
-    love_number, state["sweet_mode"]
-)
-mode_label, _ = get_mode(
-    character,
-    effective_love_number,
-    state["lead_gauge"],
-    state.get("personality_override", PERSONALITY_AUTO),
-)
-
-st.title(f"{character}とのチャットルーム")
-
-sweet_label = "ON" if state["sweet_mode"] else "OFF"
-st.info(
-    f"💖 親密度: **{love_label}**（{state['love_points']}pt） "
-    f"│ 🎭 性格: **{mode_label}**（ゲージ: {state['lead_gauge']}） "
-    f"│ 🍯 あまあま: **{sweet_label}**"
-)
-
 icons = {
     "愛花": "manaka_icon.png",
     "凛子": "rinko_icon.png",
@@ -883,6 +954,45 @@ st.markdown(
         font-size: 1.04rem;
         line-height: 1.85;
         letter-spacing: 0.01em;
+    }
+
+    .daily-overview {
+        margin: 0.25rem 0 1.25rem;
+        padding: 0.85rem 1rem;
+        border-radius: 0.8rem;
+        background: #eaf3ff;
+        color: #155a91;
+        font-size: 0.96rem;
+        line-height: 1.75;
+    }
+
+    .scene-intro {
+        margin: 0.35rem 0 1.15rem;
+        color: #6b7280;
+        font-size: 0.94rem;
+        line-height: 1.8;
+    }
+
+    @media (max-width: 640px) {
+        div[data-testid="stAppViewContainer"] h1 {
+            font-size: 2rem;
+            line-height: 1.22;
+        }
+
+        .loveplus-narration,
+        .scene-intro {
+            font-size: 0.9rem;
+            line-height: 1.7;
+        }
+
+        .loveplus-dialogue-window {
+            padding: 1.5rem 0.95rem 0.85rem;
+        }
+
+        .loveplus-dialogue-text {
+            font-size: 1rem;
+            line-height: 1.72;
+        }
     }
 
     @media (prefers-color-scheme: dark) {
@@ -965,6 +1075,170 @@ def render_assistant_message(message: dict, speaker: str) -> None:
     )
 
 
+def enter_scene(scene_context: dict) -> None:
+    """日常行動画面から会話シーンへ移動する。"""
+    character_name = scene_context.get("character")
+    if character_name not in CHARACTERS:
+        st.error("この場面の相手を特定できませんでした。")
+        return
+
+    st.session_state.scene_context = scene_context.copy()
+    st.session_state.screen_mode = SCREEN_SCENE
+    st.session_state.chat_histories[character_name] = []
+    st.session_state.pop("active_character", None)
+    st.rerun()
+
+
+def return_to_daily() -> None:
+    """現在の会話シーンを閉じ、日常行動画面へ戻る。"""
+    st.session_state.screen_mode = SCREEN_DAILY
+    st.session_state.scene_context = None
+    st.session_state.pop("active_character", None)
+    st.rerun()
+
+
+def render_daily_screen() -> None:
+    """場所を選び、遭遇シーンへ進むゲームの入口を表示する。"""
+    now = datetime.datetime.now(JST)
+    game_date = now.date().isoformat()
+    date_label = now.strftime("%Y年%m月%d日")
+
+    st.title("今日の行動")
+    st.markdown(
+        '<div class="daily-overview">'
+        f"<strong>{html_text(date_label)}</strong><br>"
+        f"🕒 時間帯: {html_text(DEFAULT_GAME_TIME_SLOT)}　"
+        "🏠 現在地: 自宅"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.write("放課後になった。今日はどこへ行こう？")
+
+    st.subheader("行き先を選ぶ")
+    action_items = list(SCENE_ACTIONS.items())
+    for index, (action_id, action) in enumerate(action_items):
+        st.markdown(f"**{action['icon']} {action['title']}**")
+        st.caption(action["description"])
+        if st.button(
+            "ここへ行く",
+            key=f"daily_action_{action_id}",
+            use_container_width=True,
+        ):
+            enter_scene(build_scene_context(action_id, game_date))
+        if index < len(action_items) - 1:
+            st.divider()
+
+    st.divider()
+    unlocked_characters = [
+        name
+        for name in CHARACTERS
+        if is_free_talk_unlocked(
+            st.session_state.game_state[name]["love_points"]
+        )
+    ]
+    st.subheader("いつでも会う")
+    if unlocked_characters:
+        st.caption("恋人になったカノジョに、好きなときに会いに行けます。")
+        for name in unlocked_characters:
+            if st.button(
+                f"💞 {name}に会う",
+                key=f"free_talk_{name}",
+                use_container_width=True,
+            ):
+                enter_scene(build_free_talk_context(name, game_date))
+    else:
+        st.caption("恋人になると『いつでも会う』が解禁されます。")
+
+    with st.expander("みんなとの関係"):
+        for name in CHARACTERS:
+            character_state = st.session_state.game_state[name]
+            relationship, _ = get_love_level(character_state["love_points"])
+            st.write(
+                f"**{name}**：{relationship} "
+                f"（{character_state['love_points']}pt）"
+            )
+
+
+st.sidebar.title("メニュー")
+if st.session_state.screen_mode == SCREEN_SCENE:
+    scene_sidebar_context = st.session_state.scene_context or {}
+    st.sidebar.caption(
+        f"{scene_sidebar_context.get('location', '会話中')}・"
+        f"{scene_sidebar_context.get('time_slot', '')}"
+    )
+    if st.sidebar.button("日常へ戻る", use_container_width=True):
+        return_to_daily()
+
+st.sidebar.markdown("---")
+if st.sidebar.button("ログアウト", use_container_width=True):
+    st.session_state.authenticated = False
+    for key in (
+        "game_state",
+        "_game_state_schema_version",
+        "_spreadsheet",
+        "active_character",
+        "scene_context",
+        "screen_mode",
+    ):
+        st.session_state.pop(key, None)
+    st.rerun()
+
+scene_context = st.session_state.scene_context
+if (
+    st.session_state.screen_mode != SCREEN_SCENE
+    or not isinstance(scene_context, dict)
+    or scene_context.get("character") not in CHARACTERS
+):
+    render_daily_screen()
+    st.stop()
+
+character = scene_context["character"]
+if st.session_state.get("active_character") != character:
+    st.session_state.active_character = character
+    try:
+        with st.spinner("これまでの思い出を読み込み中..."):
+            st.session_state.recent_memory = load_recent_memory()
+    except Exception:
+        st.session_state.recent_memory = ""
+        st.warning("直近の会話履歴を読み込めませんでした。今回は現在の会話だけで続けます。")
+
+state = st.session_state.game_state[character]
+love_label, love_number = get_love_level(state["love_points"])
+effective_love_number = get_effective_love_level(
+    love_number, state["sweet_mode"]
+)
+mode_label, _ = get_mode(
+    character,
+    effective_love_number,
+    state["lead_gauge"],
+    state.get("personality_override", PERSONALITY_AUTO),
+)
+
+if st.button("← 日常へ戻る", key="back_to_daily_main"):
+    return_to_daily()
+
+st.title(scene_context["location"])
+st.caption(
+    f"{scene_context.get('game_date', '')} ｜ "
+    f"{scene_context.get('time_slot', '')} ｜ {character}"
+)
+st.markdown(
+    '<div class="scene-intro">'
+    f"{html_text(scene_context.get('intro', ''))}"
+    "</div>",
+    unsafe_allow_html=True,
+)
+
+sweet_label = "ON" if state["sweet_mode"] else "OFF"
+st.caption(
+    f"💖 {love_label}（{state['love_points']}pt） "
+    f"｜ 🎭 {mode_label} ｜ 🍯 あまあま: {sweet_label}"
+)
+with st.expander("関係とモードの詳細"):
+    st.write(f"親密度：**{love_label}**（{state['love_points']}pt）")
+    st.write(f"性格：**{mode_label}**（ゲージ: {state['lead_gauge']}）")
+    st.write(f"あまあまモード：**{sweet_label}**")
+
 ai_icon = existing_avatar(icons[character], "👩")
 user_icon = existing_avatar("user_icon.png", "🧑")
 history = st.session_state.chat_histories[character]
@@ -982,8 +1256,13 @@ for message in history:
 # 7. 送信・判定・保存
 # =========================================================
 
+input_label = (
+    f"{character}と自由に話す"
+    if scene_context.get("scene_kind") == "free_talk"
+    else f"{character}に話しかける"
+)
 if user_msg := st.chat_input(
-    f"{character}にメッセージを送る（行動を入れる時はカッコを使う）"
+    f"{input_label}（行動を入れる時はカッコを使う）"
 ):
     with st.chat_message("user", avatar=user_icon):
         st.write(user_msg)
@@ -999,7 +1278,9 @@ if user_msg := st.chat_input(
             st.warning("裏ワザは今回の画面では反映しましたが、永続保存に失敗しました。")
 
     system_instruction = build_system_instruction(
-        character, st.session_state.recent_memory
+        character,
+        st.session_state.recent_memory,
+        scene_context,
     )
     contents = build_contents(history)
 
