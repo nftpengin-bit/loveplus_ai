@@ -3,6 +3,7 @@ import hmac
 import html
 import json
 import re
+import uuid
 from pathlib import Path
 
 import gspread
@@ -126,8 +127,11 @@ SCENE_ACTIONS = {
 MODEL_NAME = st.secrets.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 SHEET_URL = st.secrets.get("SHEET_URL", "")
 STATE_SHEET_NAME = "game_state"
+CONVERSATION_LOG_SHEET_NAME = "conversation_log_v2"
+SCENE_COMMIT_SHEET_NAME = "scene_memory_commits"
 GAME_STATE_SCHEMA_VERSION = 2
 MAX_SESSION_MESSAGES = 16
+MAX_COMMITTED_MEMORY_TURNS = 20
 
 PERSONALITY_AUTO = "auto"
 PERSONALITY_COLORS = {
@@ -157,6 +161,35 @@ STATE_HEADERS = [
     "sweet_mode",
     "updated_at",
     "personality_override",
+]
+CONVERSATION_LOG_HEADERS = [
+    "scene_id",
+    "memory_status",
+    "created_at",
+    "character",
+    "game_date",
+    "weekday",
+    "time_slot",
+    "weather",
+    "location_id",
+    "location_name",
+    "scene_type",
+    "action_id",
+    "user_message",
+    "narration",
+    "dialogue",
+    "expression",
+    "pose",
+]
+SCENE_COMMIT_HEADERS = [
+    "scene_id",
+    "memory_status",
+    "committed_at",
+    "end_reason",
+    "character",
+    "game_date",
+    "time_slot",
+    "location_id",
 ]
 
 STATUS_TAG_PATTERN = re.compile(r"\[(LOVE_UP|LEAD_UP|LEAD_DOWN)\]")
@@ -261,6 +294,7 @@ def create_scene_state(
     previous_state: dict | None = None,
     action_id: str = "",
     intro: str = "",
+    scene_id: str = "",
 ) -> dict:
     """登録済み場所だけを使って、正規形の場面状態を作る。"""
     if scene_type not in VALID_SCENE_TYPES:
@@ -280,7 +314,11 @@ def create_scene_state(
         previous_location_id = resolved_location_id
 
     normalized_date = datetime.date.fromisoformat(str(game_date)).isoformat()
+    normalized_scene_id = str(scene_id).strip()
+    if scene_type != SCENE_TYPE_DAILY and not normalized_scene_id:
+        normalized_scene_id = uuid.uuid4().hex
     return {
+        "scene_id": normalized_scene_id,
         "location_id": resolved_location_id,
         "previous_location_id": previous_location_id,
         "game_date": normalized_date,
@@ -528,6 +566,50 @@ def get_or_create_state_sheet():
     return worksheet
 
 
+def get_or_create_header_sheet(sheet_name: str, headers: list[str]):
+    """ログ用タブを作成し、既存ヘッダーの不一致は安全のため停止する。"""
+    spreadsheet = get_spreadsheet()
+    try:
+        worksheet = spreadsheet.worksheet(sheet_name)
+    except WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(
+            title=sheet_name,
+            rows=2000,
+            cols=len(headers),
+        )
+
+    if worksheet.col_count < len(headers):
+        worksheet.resize(cols=len(headers))
+
+    last_column = chr(ord("A") + len(headers) - 1)
+    header_rows = worksheet.get_values(f"A1:{last_column}1")
+    current_headers = header_rows[0][: len(headers)] if header_rows else []
+    if not current_headers:
+        worksheet.update(
+            range_name=f"A1:{last_column}1",
+            values=[headers],
+            value_input_option="RAW",
+        )
+    elif current_headers != headers:
+        raise ValueError(f"{sheet_name} のヘッダーが現行仕様と一致しません。")
+
+    return worksheet
+
+
+def get_or_create_conversation_log_sheet():
+    return get_or_create_header_sheet(
+        CONVERSATION_LOG_SHEET_NAME,
+        CONVERSATION_LOG_HEADERS,
+    )
+
+
+def get_or_create_scene_commit_sheet():
+    return get_or_create_header_sheet(
+        SCENE_COMMIT_SHEET_NAME,
+        SCENE_COMMIT_HEADERS,
+    )
+
+
 # =========================================================
 # 4. セーブデータと会話ログ
 # =========================================================
@@ -636,30 +718,211 @@ def save_game_state(state: dict) -> None:
     )
 
 
-def log_to_spreadsheet(character: str, user_msg: str, ai_msg: str) -> None:
-    """既存の先頭シートへ、従来と同じ新しい順で会話を保存する。"""
-    worksheet = get_spreadsheet().sheet1
+def rows_to_records(headers: list[str], rows: list[list[str]]) -> list[dict]:
+    """Sheetsの行配列を、欠損セルに強い辞書へ変換する。"""
+    return [
+        {
+            header: row[index] if index < len(row) else ""
+            for index, header in enumerate(headers)
+        }
+        for row in rows
+        if any(str(value).strip() for value in row)
+    ]
+
+
+def build_conversation_log_row(
+    scene_state: dict,
+    character: str,
+    user_msg: str,
+    reply: dict,
+    created_at: str,
+) -> list:
+    """1往復を、場面にひもづく未確定の生ログ行へ変換する。"""
+    location_id = resolve_location_id(scene_state.get("location_id"))
+    return [
+        str(scene_state.get("scene_id", "")),
+        "pending",
+        created_at,
+        character,
+        str(scene_state.get("game_date", "")),
+        str(scene_state.get("weekday", "")),
+        str(scene_state.get("time_slot", "")),
+        str(scene_state.get("weather", "")),
+        location_id,
+        get_location(location_id)["name"],
+        str(scene_state.get("scene_type", "")),
+        str(scene_state.get("action_id", "")),
+        user_msg,
+        str(reply.get("narration", "")),
+        str(reply.get("dialogue", "")),
+        str(reply.get("expression", "neutral")),
+        str(reply.get("pose", "normal")),
+    ]
+
+
+def build_scene_commit_row(
+    scene_state: dict,
+    committed_at: str,
+    end_reason: str,
+) -> list:
+    """場面終了を、未確定ログとは別の追記専用レコードにする。"""
+    return [
+        str(scene_state.get("scene_id", "")),
+        "committed",
+        committed_at,
+        end_reason,
+        str(scene_state.get("character", "")),
+        str(scene_state.get("game_date", "")),
+        str(scene_state.get("time_slot", "")),
+        resolve_location_id(scene_state.get("location_id")),
+    ]
+
+
+def select_committed_memory_rows(
+    log_records: list[dict],
+    committed_scene_ids: set[str],
+    character: str,
+    limit: int = MAX_COMMITTED_MEMORY_TURNS,
+) -> list[dict]:
+    """同じ相手の、正常終了した場面だけを古い順で返す。"""
+    filtered = [
+        record
+        for record in log_records
+        if record.get("scene_id") in committed_scene_ids
+        and record.get("character") == character
+    ]
+    if limit <= 0:
+        return []
+    return filtered[-limit:]
+
+
+def format_committed_memory(character: str, records: list[dict]) -> str:
+    """確定済みログを、会話AIへ渡す短い履歴へ整形する。"""
+    if not records:
+        return ""
+
+    lines = [f"【{character}との確定済みの思い出】"]
+    for record in records:
+        place = record.get("location_name") or record.get("location_id", "")
+        scene_label = "・".join(
+            value
+            for value in (
+                record.get("game_date", ""),
+                record.get("time_slot", ""),
+                place,
+            )
+            if value
+        )
+        if scene_label:
+            lines.append(f"[{scene_label}]")
+        lines.append(f"ユーザー: {record.get('user_message', '')}")
+        narration = str(record.get("narration", "")).strip()
+        dialogue = str(record.get("dialogue", "")).strip()
+        if narration:
+            lines.append(f"地の文: {narration}")
+        lines.append(f"{character}: {dialogue}")
+
+    return "\n".join(lines)
+
+
+def log_to_spreadsheet(
+    scene_state: dict,
+    character: str,
+    user_msg: str,
+    reply: dict,
+) -> None:
+    """会話を即時保存するが、場面終了までは長期記憶に採用しない。"""
+    if not str(scene_state.get("scene_id", "")).strip():
+        raise ValueError("会話ログに必要な scene_id がありません。")
     now = datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.insert_row(
-        [now, character, user_msg, ai_msg],
-        index=1,
-        value_input_option="USER_ENTERED",
+    get_or_create_conversation_log_sheet().append_row(
+        build_conversation_log_row(
+            scene_state,
+            character,
+            user_msg,
+            reply,
+            now,
+        ),
+        value_input_option="RAW",
     )
 
 
-def load_recent_memory() -> str:
-    """既存仕様を保ち、全ヒロイン共通の直近20件を読み込む。"""
-    rows = get_spreadsheet().sheet1.get_values("A1:D20")
-    if not rows:
+def commit_scene_memory(
+    scene_state: dict,
+    end_reason: str = "returned_home",
+) -> bool:
+    """正常に終了した場面を確定し、次回以降の思い出へ採用する。"""
+    scene_id = str(scene_state.get("scene_id", "")).strip()
+    if not scene_id or scene_state.get("scene_type") == SCENE_TYPE_DAILY:
+        return False
+
+    worksheet = get_or_create_scene_commit_sheet()
+    existing_rows = worksheet.get_values("A2:B")
+    if any(
+        len(row) >= 2 and row[0] == scene_id and row[1] == "committed"
+        for row in existing_rows
+    ):
+        return True
+
+    now = datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+    worksheet.append_row(
+        build_scene_commit_row(scene_state, now, end_reason),
+        value_input_option="RAW",
+    )
+    return True
+
+
+def load_legacy_recent_memory(
+    character: str,
+    limit: int = MAX_COMMITTED_MEMORY_TURNS,
+) -> str:
+    """新方式導入前のログは、同じヒロインの分だけ既存の思い出として読む。"""
+    rows = get_spreadsheet().sheet1.get_values("A1:D200")
+    matching_rows = [
+        row
+        for row in rows
+        if len(row) >= 4 and row[1] == character
+    ][:max(0, limit)]
+    if not matching_rows:
         return ""
 
-    lines = ["【直近の会話履歴（他のヒロインとの会話も含む）】"]
-    for row in reversed(rows):
-        if len(row) >= 4:
-            lines.append(f"ユーザー: {row[2]}")
-            lines.append(f"{row[1]}: {row[3]}")
-
+    lines = [f"【{character}との以前の会話履歴】"]
+    for row in reversed(matching_rows):
+        lines.append(f"ユーザー: {row[2]}")
+        lines.append(f"{character}: {row[3]}")
     return "\n".join(lines)
+
+
+def load_recent_memory(character: str) -> str:
+    """同じ相手との、正常終了した場面だけを直近の記憶として読む。"""
+    if character not in CHARACTERS:
+        raise ValueError(f"unknown character: {character}")
+
+    commit_rows = get_or_create_scene_commit_sheet().get_values("A2:H")
+    commit_records = rows_to_records(SCENE_COMMIT_HEADERS, commit_rows)
+    committed_scene_ids = {
+        record["scene_id"]
+        for record in commit_records
+        if record.get("memory_status") == "committed"
+    }
+
+    log_rows = get_or_create_conversation_log_sheet().get_values("A2:Q")
+    log_records = rows_to_records(CONVERSATION_LOG_HEADERS, log_rows)
+    selected_records = select_committed_memory_rows(
+        log_records,
+        committed_scene_ids,
+        character,
+    )
+    legacy_memory = load_legacy_recent_memory(
+        character,
+        MAX_COMMITTED_MEMORY_TURNS - len(selected_records),
+    )
+    committed_memory = format_committed_memory(character, selected_records)
+    return "\n\n".join(
+        memory
+        for memory in (legacy_memory, committed_memory)
+        if memory
+    )
 
 
 if (
@@ -1319,8 +1582,16 @@ def enter_scene(next_scene_state: dict) -> None:
 
 
 def return_to_daily() -> None:
-    """現在の会話シーンを閉じ、日常行動画面へ戻る。"""
+    """現在の場面を記憶へ確定してから、自宅の日常画面へ戻る。"""
     current_scene_state = st.session_state.scene_state
+    try:
+        with st.spinner("この場面を思い出として保存中..."):
+            commit_scene_memory(current_scene_state)
+    except Exception as error:
+        st.error("この場面の記憶を確定できなかったため、日常へは戻りませんでした。もう一度お試しください。")
+        st.caption(f"エラー種別: {type(error).__name__}")
+        return
+
     st.session_state.scene_state = build_daily_scene_state(
         previous_state=current_scene_state,
         game_date=current_scene_state.get("game_date"),
@@ -1331,6 +1602,7 @@ def return_to_daily() -> None:
     )
     st.session_state.screen_mode = SCREEN_DAILY
     st.session_state.pop("active_character", None)
+    st.session_state.recent_memory = ""
     st.rerun()
 
 
@@ -1433,8 +1705,9 @@ if st.session_state.screen_mode == SCREEN_SCENE:
         f"{sidebar_location['name']}・"
         f"{sidebar_scene_state.get('time_slot', '')}"
     )
-    if st.sidebar.button("日常へ戻る", use_container_width=True):
+    if st.sidebar.button("場面を終えて帰宅", use_container_width=True):
         return_to_daily()
+    st.sidebar.caption("ログアウトすると、この場面は途中終了となり次回の思い出には確定されません。")
 
 st.sidebar.markdown("---")
 if st.sidebar.button("ログアウト", use_container_width=True):
@@ -1447,6 +1720,8 @@ if st.sidebar.button("ログアウト", use_container_width=True):
         "scene_state",
         "scene_context",
         "screen_mode",
+        "chat_histories",
+        "recent_memory",
     ):
         st.session_state.pop(key, None)
     st.rerun()
@@ -1466,7 +1741,7 @@ if st.session_state.get("active_character") != character:
     st.session_state.active_character = character
     try:
         with st.spinner("これまでの思い出を読み込み中..."):
-            st.session_state.recent_memory = load_recent_memory()
+            st.session_state.recent_memory = load_recent_memory(character)
     except Exception:
         st.session_state.recent_memory = ""
         st.warning("直近の会話履歴を読み込めませんでした。今回は現在の会話だけで続けます。")
@@ -1483,7 +1758,7 @@ mode_label, _ = get_mode(
     state.get("personality_override", PERSONALITY_AUTO),
 )
 
-if st.button("← 日常へ戻る", key="back_to_daily_main"):
+if st.button("← 会話を終えて帰宅", key="back_to_daily_main"):
     return_to_daily()
 
 scene_location = get_location(scene_state["location_id"])
@@ -1510,6 +1785,7 @@ with st.expander("関係とモードの詳細"):
     st.write(f"親密度：**{love_label}**（{state['love_points']}pt）")
     st.write(f"性格：**{mode_label}**（ゲージ: {state['lead_gauge']}）")
     st.write(f"あまあまモード：**{sweet_label}**")
+st.caption("この場面の会話は随時保護され、日常へ戻った時に次回の思い出として確定します。")
 
 ai_icon = existing_avatar(icons[character], "👩")
 user_icon = existing_avatar("user_icon.png", "🧑")
@@ -1605,9 +1881,10 @@ if user_msg := st.chat_input(
         try:
             # 保存完了を確認してから処理を終えるため、バックグラウンドスレッドは使わない。
             log_to_spreadsheet(
+                scene_state,
                 character,
                 user_msg,
-                format_conversation_reply(reply),
+                reply,
             )
         except Exception:
             st.warning("返事は表示できましたが、会話ログをGoogle Sheetsへ保存できませんでした。")
