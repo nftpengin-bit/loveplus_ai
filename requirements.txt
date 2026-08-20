@@ -1,5 +1,5 @@
-streamlit
-google-generativeai
-Pillow
-gspread
-google-auth
+streamlit>=1.41,<2
+google-genai>=2.3,<3
+Pillow>=10,<12
+gspread>=6.1,<7
+google-auth>=2.40,<3
