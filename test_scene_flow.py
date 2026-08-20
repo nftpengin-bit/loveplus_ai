@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 
-APP_PATH = Path(__file__).with_name("app.py")
+APP_PATH = Path(__file__).with_name("game_app.py")
 SOURCE = APP_PATH.read_text(encoding="utf-8")
 TREE = ast.parse(SOURCE)
 
