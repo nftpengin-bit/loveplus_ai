@@ -41,6 +41,22 @@ class UiEntrypointTests(unittest.TestCase):
         self.assertIn("TIME", source)
         self.assertIn("WEATHER", source)
 
+    def test_home_stage_uses_html_renderer_not_markdown_parser(self):
+        source = self.read("every_home_ui.py")
+
+        self.assertIn("st.html(EVERY_HOME_CSS)", source)
+        self.assertIn("st.html(stage_html)", source)
+        self.assertIn("def _build_stage_html(", source)
+        self.assertNotIn("st.markdown(stage_html", source)
+
+    def test_mobile_action_commands_are_forced_to_one_horizontal_row(self):
+        source = self.read("every_home_ui.py")
+
+        self.assertIn("flex-direction: row !important", source)
+        self.assertIn("flex-wrap: nowrap !important", source)
+        self.assertIn("width: 33.333% !important", source)
+        self.assertIn("min-width: 0 !important", source)
+
     def test_original_game_core_remains_available(self):
         source = self.read("game_app.py")
 
