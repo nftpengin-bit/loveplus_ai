@@ -21,12 +21,20 @@ CHARACTERS = ("愛花", "凛子", "寧々")
 MODEL_NAME = st.secrets.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 SHEET_URL = st.secrets.get("SHEET_URL", "")
 STATE_SHEET_NAME = "game_state"
+GAME_STATE_SCHEMA_VERSION = 1
 MAX_SESSION_MESSAGES = 16
 
 DEFAULT_GAME_STATE = {
     name: {"love_points": 0, "lead_gauge": 0, "sweet_mode": False}
     for name in CHARACTERS
 }
+STATE_HEADERS = [
+    "character",
+    "love_points",
+    "lead_gauge",
+    "sweet_mode",
+    "updated_at",
+]
 
 STATUS_TAG_PATTERN = re.compile(r"\[(LOVE_UP|LEAD_UP|LEAD_DOWN)\]")
 
@@ -139,24 +147,45 @@ def copy_default_game_state() -> dict:
 
 
 def load_game_state() -> dict:
-    """game_stateタブから3人分の状態を読み込む。初回は自動作成する。"""
+    """game_stateタブを読み込み、不完全なら3人分の正規形へ自動修復する。"""
     state = copy_default_game_state()
     worksheet = get_or_create_state_sheet()
-    rows = worksheet.get_values("A2:E20")
+    rows = worksheet.get_values("A1:E4")
+    header = rows[0][:5] if rows else []
+    data_rows = rows[1:] if len(rows) > 1 else []
+    loaded_characters = set()
+    rows_are_canonical = len(data_rows) == len(CHARACTERS)
 
-    for row in rows:
-        if len(row) < 4 or row[0] not in CHARACTERS:
+    for row_index, row in enumerate(data_rows):
+        if (
+            len(row) < 4
+            or row[0] not in CHARACTERS
+            or row[0] in loaded_characters
+        ):
+            rows_are_canonical = False
             continue
 
         character_name = row[0]
+        loaded_characters.add(character_name)
         state[character_name] = {
             "love_points": max(0, safe_int(row[1])),
             "lead_gauge": max(-5, min(5, safe_int(row[2]))),
             "sweet_mode": safe_bool(row[3]),
         }
 
-    # 空のタブだった場合も、正しい見出しと初期値を作る。
-    if not rows:
+        if (
+            row_index >= len(CHARACTERS)
+            or character_name != CHARACTERS[row_index]
+            or len(row) < 5
+        ):
+            rows_are_canonical = False
+
+    needs_repair = (
+        header != STATE_HEADERS
+        or loaded_characters != set(CHARACTERS)
+        or not rows_are_canonical
+    )
+    if needs_repair:
         save_game_state(state)
 
     return state
@@ -165,7 +194,7 @@ def load_game_state() -> dict:
 def save_game_state(state: dict) -> None:
     """専用タブを3人分の最新状態で更新する。"""
     now = datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
-    values = [["character", "love_points", "lead_gauge", "sweet_mode", "updated_at"]]
+    values = [STATE_HEADERS.copy()]
 
     for name in CHARACTERS:
         values.append(
@@ -212,10 +241,16 @@ def load_recent_memory() -> str:
     return "\n".join(lines)
 
 
-if "game_state" not in st.session_state:
+if (
+    st.session_state.get("_game_state_schema_version")
+    != GAME_STATE_SCHEMA_VERSION
+):
     try:
         with st.spinner("セーブデータを読み込み中..."):
             st.session_state.game_state = load_game_state()
+            st.session_state._game_state_schema_version = (
+                GAME_STATE_SCHEMA_VERSION
+            )
     except Exception as error:
         st.error("セーブデータを読み込めませんでした。Google Sheetsの共有設定を確認してください。")
         st.caption(f"エラー種別: {type(error).__name__}")
@@ -427,6 +462,9 @@ st.sidebar.markdown("---")
 
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
+    st.session_state.pop("game_state", None)
+    st.session_state.pop("_game_state_schema_version", None)
+    st.session_state.pop("_spreadsheet", None)
     st.rerun()
 
 if st.session_state.get("active_character") != character:
