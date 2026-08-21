@@ -18,6 +18,42 @@ def _compact_date_label(scene_state: dict, fallback: object) -> str:
         return str(fallback or game_date)
 
 
+def _time_band_label(time_slot: object) -> str:
+    """既存の時間帯値を、確定済み4大時間帯の表示ラベルへ対応付ける。"""
+    text = str(time_slot or "").strip()
+    lowered = text.lower()
+
+    if "朝" in text or "morning" in lowered:
+        return "MORNING"
+    if "夜" in text or "night" in lowered:
+        return "NIGHT"
+    if (
+        "放課後" in text
+        or "夕" in text
+        or "evening" in lowered
+    ):
+        return "EVENING"
+    if (
+        "昼" in text
+        or "午前" in text
+        or "午後" in text
+        or "daytime" in lowered
+        or "afternoon" in lowered
+    ):
+        return "DAYTIME"
+
+    return ""
+
+
+def _display_time_slot(time_slot: object) -> str:
+    """4大時間帯が判定できる場合だけ、既存値と併記して表示する。"""
+    raw_value = str(time_slot or "").strip()
+    band_label = _time_band_label(raw_value)
+    if band_label and raw_value:
+        return f"{band_label} / {raw_value}"
+    return raw_value or band_label
+
+
 def _render_home_from_frame(frame) -> bool:
     """旧appのホーム描画直前の状態を使ってEVERY風ホームへ差し替える。"""
     globals_ = frame.f_globals
@@ -90,7 +126,7 @@ def _render_home_from_frame(frame) -> bool:
             source_date_label,
         ),
         weekday=str(daily_scene_state.get("weekday", "")),
-        time_slot=str(daily_scene_state.get("time_slot", "")),
+        time_slot=_display_time_slot(daily_scene_state.get("time_slot", "")),
         weather=str(daily_scene_state.get("weather", "")),
         location_name=str(current_location.get("name", "自宅")),
         intro=str(daily_scene_state.get("intro", "")),
