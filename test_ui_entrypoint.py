@@ -43,6 +43,15 @@ class UiEntrypointTests(unittest.TestCase):
         self.assertIn("st.stop()", source)
         self.assertIn("EVERY風ホームUIの表示に失敗", source)
 
+    def test_home_time_hud_uses_four_part_time_labels_without_fake_schedule(self):
+        source = self.read("every_home_hook.py")
+
+        self.assertIn("def _time_band_label(", source)
+        self.assertIn("def _display_time_slot(", source)
+        for label in ("MORNING", "DAYTIME", "EVENING", "NIGHT"):
+            self.assertIn(f'"{label}"', source)
+        self.assertIn("band_label and raw_value", source)
+
     def test_home_ui_does_not_show_unimplemented_fake_values(self):
         source = self.read("every_home_ui.py")
 
